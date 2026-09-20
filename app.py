@@ -155,13 +155,15 @@ elif menu == "🖼️ Rendering & Planimetrie Stanze":
         if stanza not in st.session_state.room_renderings:
             st.session_state.room_renderings[stanza] = []
         for file in uploaded_files:
-            if file not in st.session_state.room_renderings[stanza]:
-                st.session_state.room_renderings[stanza].append(file)
+            file_bytes = file.getvalue()
+            # Salvataggio sicuro in formato Byte
+            if not any(item["name"] == file.name for item in st.session_state.room_renderings[stanza]):
+                st.session_state.room_renderings[stanza].append({"name": file.name, "bytes": file_bytes})
                 
     if stanza in st.session_state.room_renderings and st.session_state.room_renderings[stanza]:
         st.markdown(f"### 📷 Immagini salvate per: *{stanza}*")
-        for i, img_file in enumerate(st.session_state.room_renderings[stanza]):
-            st.image(img_file, caption=f"{stanza} - Immagine {i+1}", use_column_width=True)
+        for i, img_data in enumerate(st.session_state.room_renderings[stanza]):
+            st.image(img_data["bytes"], caption=f"{stanza} - {img_data['name']}", use_container_width=True)
             if st.button(f"Elimina immagine {i+1} da {stanza}", key=f"del_{stanza}_{i}"):
                 st.session_state.room_renderings[stanza].pop(i)
                 st.rerun()
@@ -204,15 +206,12 @@ elif menu == "🪑 Lista Mobili (15k €)":
     else:
         st.info("Nessun mobile trovato.")
 
-# --- 6. BILANCIO NUOVA CASA (PULITO E MODIFICABILE) ---
+# --- 6. BILANCIO NUOVA CASA ---
 elif menu == "🏠 Bilancio Nuova Casa":
     st.subheader("🏠 Piano Finanziario Nuova Casa")
-    st.write("Visualizzazione pulita e intuitiva del piano acquisto. Puoi anche modificare i valori direttamente se necessario.")
+    st.write("Visualizzazione pulita e intuitiva del piano acquisto.")
     
-    # Puliamo il DataFrame rimuovendo le colonne e righe vuote ("NaN" / "None")
     clean_df = st.session_state.editable_casa.dropna(how="all").dropna(axis=1, how="all")
-    
-    # Mostriamo la tabella pulita senza celle vuote fastidiose
     edited_df = st.data_editor(clean_df, num_rows="dynamic", use_container_width=True, hide_index=True)
     st.session_state.editable_casa = edited_df
     
