@@ -46,6 +46,44 @@ if menu == "🎯 Simulatore Risparmio Mobili":
 elif menu == "📊 Medie Costi Famiglia":
     st.subheader("Medie Mensili Spese")
     try:
+        medie_df = df_costi.iloc[0:9, [14, 15]].dropna()
+        medie_df.columns = ["Categoria", "Media (€)"]
+        for index, row in medie_df.iterrows():
+            st.metric(label=str(row["Categoria"]), value=f"{float(row['Media (€)']):.2f} €")
+    except Exception as e:
+        st.error(f"Errore nella lettura delle medie: {e}")
+
+# --- 3. LISTA MOBILI ---
+elif menu == "🪑 Lista Mobili (15k €)":
+    st.subheader("Controllo Mobili & Arredi")
+    if not df_mobili.empty:
+        mobili_clean = df_mobili[["Articolo", "Costo", "NEGOZIO"]].dropna(how="all")
+        for index, row in mobili_clean.iterrows():
+            st.container()
+            st.write(f"**{row['Articolo']}** — 💰 {row['Costo']} €  \n🏪 *Negozio: {row['NEGOZIO']}*")
+            st.divider()
+    else:
+        st.info("Nessun mobile trovato.")
+
+# --- 4. BILANCIO NUOVA CASA ---
+elif menu == "🏠 Bilancio Nuova Casa":
+    st.subheader("Piano Finanziario Nuova Casa")
+    if not df_casa.empty:
+        st.dataframe(df_casa.dropna(how="all"), use_container_width=True)
+    else:
+        st.info("Dati non disponibili.")
+    st.write("Calcola il risparmio mensile per arrivare a ottobre 2027.")
+    
+    obiettivo = st.number_input("Costo totale obiettivo [€]:", value=15000.0, step=500.0)
+    mesi = st.slider("Mesi rimanenti:", min_value=1, max_value=36, value=13)
+    
+    risparmio_mensile = obiettivo / mesi
+    st.success(f"💡 Per l'obiettivo di **{obiettivo:,.2f} €** in **{mesi} mesi**, devi risparmiare:\n### **{risparmio_mensile:,.2f} € al mese**")
+
+# --- 2. MEDIE COSTI FAMIGLIA ---
+elif menu == "📊 Medie Costi Famiglia":
+    st.subheader("Medie Mensili Spese")
+    try:
         medie_df = df_costi.iloc[0:9, [0, 14]].dropna()
         medie_df.columns = ["Categoria", "Media (€)"]
         for index, row in medie_df.iterrows():
