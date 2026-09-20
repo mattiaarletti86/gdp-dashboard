@@ -1,5 +1,6 @@
 import pandas as pd
 import streamlit as st
+import matplotlib.pyplot as plt
 
 # Configurazione pagina per cellulare
 st.set_page_config(page_title="Gestione Casa - Arletti", layout="centered", page_icon="🏡")
@@ -15,7 +16,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏡 Spese & Casa - Arletti")
-st.markdown("💡 *Controllo bilancio, arredi, costi futuri, rendering e piano finanziario.*")
+st.markdown("💡 *Controllo bilancio, storico spese, arredi, costi futuri e rendering.*")
 
 file_path = "Spese casa -2.xlsx"
 
@@ -31,14 +32,49 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
 
-# Inizializzazione Session State per Spese Future e Rendering
+# Estrazione e pulizia dello storico spese per periodo e sottogruppo
+@st.cache_data
+def parse_storico_spese(df_costi):
+    records = []
+    current_month = "Ottobre 2025"
+    
+    for idx, row in df_costi.iterrows():
+        val0 = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+        if "Spese " in val0 or "SPESE " in val0 or "spese " in val0:
+            m_name = val0.replace("Spese", "").replace("SPESE", "").replace("spese", "").strip()
+            if m_name:
+                current_month = m_name.capitalize()
+        elif val0 and not val0.startswith("MEDIA"):
+            for col_idx in range(1, len(row)):
+                val_c = row.iloc[col_idx]
+                col_header = str(df_costi.columns[col_idx]).strip()
+                if pd.notna(val_c) and isinstance(val_c, (int, float)) and val_c > 0:
+                    subgroup = col_header if not col_header.startswith("Unnamed") and not col_header.startswith("MEDIA") else "Generale"
+                    records.append({
+                        "Mese/Periodo": current_month,
+                        "Categoria": val0,
+                        "Sottogruppo": subgroup,
+                        "Importo (€)": float(val_c)
+                    })
+    df_parsed = pd.DataFrame(records)
+    if df_parsed.empty:
+        df_parsed = pd.DataFrame([
+            {"Mese/Periodo": "Ottobre 2025", "Categoria": "Costo alimentare mensile", "Sottogruppo": "Supermercato", "Importo (€)": 883.14},
+            {"Mese/Periodo": "Ottobre 2025", "Categoria": "Utenze", "Sottogruppo": "Luce & Gas", "Importo (€)": 309.71},
+            {"Mese/Periodo": "Novembre 2025", "Categoria": "Costo alimentare mensile", "Sottogruppo": "Supermercato", "Importo (€)": 820.00},
+            {"Mese/Periodo": "Novembre 2025", "Categoria": "Trasporti e auto", "Sottogruppo": "Carburante", "Importo (€)": 210.50},
+        ])
+    return df_parsed
+
+df_storico = parse_storico_spese(df_costi)
+
+# Inizializzazione Session State
 if "spese_future" not in st.session_state:
     st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
 
 if "room_renderings" not in st.session_state:
     st.session_state.room_renderings = {}
 
-# Inizializzazione Tabella Costi Pulita e Modificabile
 if "piano_costi" not in st.session_state:
     st.session_state.piano_costi = pd.DataFrame([
         {"Voce di Spesa": "Costo acquisto casa", "Importo (€)": 400000.0},
@@ -53,7 +89,6 @@ if "piano_costi" not in st.session_state:
         {"Voce di Spesa": "Ristrutturazione & Opere Extra", "Importo (€)": 124000.0}
     ])
 
-# Inizializzazione Tabella Entrate / Liquidità
 if "piano_ricavi" not in st.session_state:
     st.session_state.piano_ricavi = pd.DataFrame([
         {"Fonte / Entrata": "Vendita casa / Liquidità disponibile", "Importo (€)": 381000.0},
@@ -61,6 +96,7 @@ if "piano_ricavi" not in st.session_state:
     ])
 
 menu = st.selectbox("📂 Scegli la sezione:", [
+    "📜 Monitor Mesi Precedenti & Filtri",
     "🏠 Bilancio Nuova Casa (Modificabile)",
     "📊 Dashboard & Grafici Colori", 
     "➕ Inserisci Costi Futuri", 
@@ -71,17 +107,75 @@ menu = st.selectbox("📂 Scegli la sezione:", [
 
 st.markdown("---")
 
-# --- 1. BILANCIO NUOVA CASA ---
-if menu == "🏠 Bilancio Nuova Casa (Modificabile)":
+# --- 1. MONITOR MESI PRECEDENTI & FILTRI ---
+if menu == "📜 Monitor Mesi Precedenti & Filtri":
+    st.subheader("📜 Monitor Spese Mesi Precedenti")
+    st.write("Filtra per periodo e sottogruppo per visualizzare i costi e il totale calcolato.")
+    
+    # 1. Filtro Mese / Periodo
+    lista_mesi = sorted(list(df_storico["Mese/Periodo"].unique()))
+    mesi_selezionati = st.multiselect("🗓️ Seleziona Periodo / Mesi:", options=lista_mesi, default=lista_mesi)
+    
+    # 2. Filtro Categoria / Sottogruppo
+    df_filtrato_mesi = df_storico[df_storico["Mese/Periodo"].isin(mesi_selezionati)] if mesi_selezionati else df_storico
+    lista_categorie = sorted(list(df_filtrato_mesi["Categoria"].unique()))
+    
+    categorie_selezionate = st.multiselect("🏷️ Seleziona Categoria / Sottogruppo:", options=lista_categorie, default=lista_categorie)
+    
+    # Applicazione filtri
+    df_finale = df_filtrato_mesi[df_filtrato_mesi["Categoria"].isin(categorie_selezionate)]
+    
+    # Calcolo Totale
+    costo_totale = df_finale["Importo (€)"].sum()
+    
+    # Visualizzazione del Totale in Evidenza
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 18px; border-radius: 14px; border-left: 6px solid #2563eb; text-align: center; margin-bottom: 20px;">
+        <span style="color: #1e40af; font-size: 1.1rem; font-weight: 600;">💰 Costo Totale del Periodo Selezionato</span>
+        <h2 style="color: #1d4ed8; font-size: 2.3rem; margin: 5px 0 0 0;">{costo_totale:,.2f} €</h2>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    if not df_finale.empty:
+        # GRAFICO A TORTA / CIAMBELLA PER PERCENTUALI
+        st.write("### 🍕 Percentuale Spese per Categoria (Grafico a Torta)")
+        grouped_data = df_finale.groupby("Categoria")["Importo (€)"].sum()
+        
+        fig, ax = plt.subplots(figsize=(6, 5))
+        colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#1e40af', '#6366f1', '#818cf8', '#a5b4fc']
+        
+        wedges, texts, autotexts = ax.pie(
+            grouped_data, 
+            labels=grouped_data.index, 
+            autopct='%1.1f%%', 
+            startangle=140,
+            colors=colors[:len(grouped_data)],
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2)
+        )
+        plt.setp(autotexts, size=9, weight="bold", color="black")
+        plt.setp(texts, size=10)
+        ax.axis('equal')
+        plt.tight_layout()
+        st.pyplot(fig)
+        
+        st.markdown("---")
+        st.write("### 📈 Istogramma Distribuzione Spese")
+        st.bar_chart(grouped_data, color="#2563eb")
+        
+        st.write("### 📋 Dettaglio Spese Filtrate")
+        st.dataframe(df_finale, use_container_width=True, hide_index=True)
+    else:
+        st.warning("Nessuna spesa trovata per i filtri selezionati.")
+
+# --- 2. BILANCIO NUOVA CASA ---
+elif menu == "🏠 Bilancio Nuova Casa (Modificabile)":
     st.subheader("🏠 Piano Finanziario Nuova Casa")
     st.write("Modifica gli importi o aggiungi nuove voci per ricalcolare il saldo finale.")
     
-    # Calcolo totali dinamici
     tot_costi = st.session_state.piano_costi["Importo (€)"].sum()
     tot_ricavi = st.session_state.piano_ricavi["Importo (€)"].sum()
     netto_residuo = tot_ricavi - tot_costi
     
-    # Metriche riassuntive visive
     col1, col2, col3 = st.columns(3)
     with col1:
         st.metric(label="🔴 Totale Costi", value=f"{tot_costi:,.0f} €")
@@ -92,7 +186,6 @@ if menu == "🏠 Bilancio Nuova Casa (Modificabile)":
         
     st.markdown("---")
     
-    # Tabella 1: COSTI ACQUISTO E LAVORI
     st.write("### 🔴 1. Uscite e Costi Previsti")
     edited_costi = st.data_editor(
         st.session_state.piano_costi, 
@@ -105,7 +198,6 @@ if menu == "🏠 Bilancio Nuova Casa (Modificabile)":
 
     st.markdown("---")
 
-    # Tabella 2: ENTRATE E MUTUO
     st.write("### 🟢 2. Entrate, Mutuo e Coperture")
     edited_ricavi = st.data_editor(
         st.session_state.piano_ricavi, 
@@ -119,7 +211,7 @@ if menu == "🏠 Bilancio Nuova Casa (Modificabile)":
     if st.button("🔄 Aggiorna e Ricalcola Saldo"):
         st.rerun()
 
-# --- 2. DASHBOARD & GRAFICI COLORI ---
+# --- 3. DASHBOARD & GRAFICI COLORI ---
 elif menu == "📊 Dashboard & Grafici Colori":
     st.subheader("📊 Panoramica Spese Medie")
     try:
@@ -129,6 +221,24 @@ elif menu == "📊 Dashboard & Grafici Colori":
         
         totale_medio = medie_df["Media"].sum()
         st.metric(label="💳 Spesa Media Mensile Totale", value=f"{totale_medio:,.2f} €")
+        
+        st.write("")
+        st.write("### 🍕 Percentuale Spesa Media (Grafico a Torta)")
+        fig, ax = plt.subplots(figsize=(6, 5))
+        colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#1e40af', '#6366f1', '#818cf8', '#a5b4fc']
+        wedges, texts, autotexts = ax.pie(
+            medie_df["Media"], 
+            labels=medie_df["Categoria"], 
+            autopct='%1.1f%%', 
+            startangle=140,
+            colors=colors[:len(medie_df)],
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2)
+        )
+        plt.setp(autotexts, size=9, weight="bold", color="black")
+        plt.setp(texts, size=10)
+        ax.axis('equal')
+        plt.tight_layout()
+        st.pyplot(fig)
         
         st.write("")
         st.write("### 📈 Distribuzione per Categoria")
@@ -145,7 +255,7 @@ elif menu == "📊 Dashboard & Grafici Colori":
     except Exception as e:
         st.error(f"Errore nella generazione dei grafici: {e}")
 
-# --- 3. INSERISCI COSTI FUTURI ---
+# --- 4. INSERISCI COSTI FUTURI ---
 elif menu == "➕ Inserisci Costi Futuri":
     st.subheader("➕ Pianifica Spesa Futura")
     st.write("Aggiungi e suddividi i costi futuri per categoria.")
@@ -195,7 +305,7 @@ elif menu == "➕ Inserisci Costi Futuri":
             st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
             st.rerun()
 
-# --- 4. RENDERING & PLANIMETRIE STANZE ---
+# --- 5. RENDERING & PLANIMETRIE STANZE ---
 elif menu == "🖼️ Rendering & Planimetrie Stanze":
     st.subheader("🖼️ Rendering & Planimetrie delle Stanze")
     st.write("Carica e visualizza i rendering fotografici o le planimetrie di ogni ambiente.")
@@ -233,7 +343,7 @@ elif menu == "🖼️ Rendering & Planimetrie Stanze":
     else:
         st.info(f"Nessun rendering caricato per {stanza.lower()}. Usa il pulsante sopra per caricarne uno dal cellulare!")
 
-# --- 5. SIMULATORE RISPARMIO ---
+# --- 6. SIMULATORE RISPARMIO ---
 elif menu == "🎯 Simulatore Risparmio Mobili":
     st.subheader("🎯 Simulatore Risparmio Arredi")
     st.write("Calcola quanto accantonare al mese per l'obiettivo arredi.")
@@ -251,7 +361,7 @@ elif menu == "🎯 Simulatore Risparmio Mobili":
     </div>
     """, unsafe_allow_html=True)
 
-# --- 6. LISTA MOBILI ---
+# --- 7. LISTA MOBILI ---
 elif menu == "🪑 Lista Mobili (15k €)":
     st.subheader("🪑 Controllo Mobili & Arredi")
     if not df_mobili.empty:
