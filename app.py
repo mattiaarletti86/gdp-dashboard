@@ -1,6 +1,6 @@
 import pandas as pd
 import streamlit as st
-import matplotlib.pyplot as plt
+import plotly.express as px
 
 # Configurazione pagina per cellulare
 st.set_page_config(page_title="Gestione Casa - Arletti", layout="centered", page_icon="🏡")
@@ -109,19 +109,17 @@ menu = st.selectbox("📂 Scegli la sezione:", [
 
 st.markdown("---")
 
-# --- 1. MONITOR MESI PRECEDENTI CON MENU A TENDINA ---
+# --- 1. MONITOR MESI PRECEDENTI CON GRAFICO INTERATTIVO ---
 if menu == "📜 Monitor Spese Mesi Precedenti":
     st.subheader("📜 Monitor Spese Mesi & Anni Precedenti")
     
     df_st = st.session_state.df_storico_editable
     
-    # Menu a tendina per Periodo / Mese
     lista_mesi = ["Tutti i mesi / anni"] + sorted(list(df_st["Mese/Periodo"].unique()))
     mese_scelto = st.selectbox("🗓️ Seleziona il Periodo / Mese da menu a tendina:", options=lista_mesi)
     
     df_filtrato = df_st if mese_scelto == "Tutti i mesi / anni" else df_st[df_st["Mese/Periodo"] == mese_scelto]
     
-    # Menu a tendina per Categoria / Sottogruppo
     lista_cat = ["Tutte le categorie"] + sorted(list(df_filtrato["Categoria"].unique()))
     cat_scelta = st.selectbox("🏷️ Seleziona Categoria / Sottogruppo da menu a tendina:", options=lista_cat)
     
@@ -137,7 +135,6 @@ if menu == "📜 Monitor Spese Mesi Precedenti":
     </div>
     """, unsafe_allow_html=True)
     
-    # Modifica da menu a tendina
     with st.expander("⚙️ Modifica un valore del mese selezionato tramite menu a tendina"):
         if not df_filtrato.empty:
             voce_mod = st.selectbox("Seleziona la voce da modificare:", options=df_filtrato["Categoria"].tolist())
@@ -154,33 +151,33 @@ if menu == "📜 Monitor Spese Mesi Precedenti":
             st.info("Nessuna voce presente per i filtri correnti.")
 
     if not df_filtrato.empty:
-        st.write("### 🍕 Percentuale Spese (Grafico a Torta)")
-        grouped_data = df_filtrato.groupby("Categoria")["Importo (€)"].sum()
+        st.write("### 🍕 Percentuale Spese (Grafico Zoomabile con le Dita)")
+        grouped_data = df_filtrato.groupby("Categoria", as_index=False)["Importo (€)"].sum()
         
-        # Grafico a torta ad alta leggibilità per mobile
-        fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
-        colors = ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#10b981', '#3a86ff']
-        
-        wedges, texts, autotexts = ax.pie(
+        # Grafico Plotly zoomabile
+        fig_pie = px.pie(
             grouped_data, 
-            labels=grouped_data.index, 
-            autopct='%1.1f%%', 
-            pctdistance=0.72,
-            startangle=140,
-            colors=colors[:len(grouped_data)],
-            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.5)
+            values="Importo (€)", 
+            names="Categoria", 
+            hole=0.4,
+            color_discrete_sequence=['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#3a86ff']
         )
-        # Testo percentuali grande, bianco e in grassetto
-        plt.setp(autotexts, size=12, weight="bold", color="white")
-        # Testo etichette grande e nitido
-        plt.setp(texts, size=11, weight="bold")
-        ax.axis('equal')
-        plt.tight_layout()
-        st.pyplot(fig)
+        fig_pie.update_traces(
+            textposition='inside', 
+            textinfo='percent+label',
+            textfont=dict(size=14, color='white', family='Arial Black'),
+            hovertemplate='<b>%{label}</b><br>Importo: %{value:,.2f} €<br>Percentuale: %{percent}'
+        )
+        fig_pie.update_layout(
+            margin=dict(t=20, b=20, l=10, r=10),
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
+        )
+        st.plotly_chart(fig_pie, use_container_width=True, config={'scrollZoom': True})
         
         st.markdown("---")
         st.write("### 📈 Istogramma Distribuzione Spese")
-        st.bar_chart(grouped_data, color="#2563eb")
+        st.bar_chart(grouped_data.set_index("Categoria"), color="#2563eb")
         
         st.write("### 📋 Dettaglio Spese Filtrate")
         st.dataframe(df_filtrato, use_container_width=True, hide_index=True)
@@ -272,23 +269,26 @@ elif menu == "📊 Dashboard & Grafici Colori":
         st.metric(label="💳 Spesa Media Mensile Totale", value=f"{totale_medio:,.2f} €")
         
         st.write("")
-        st.write("### 🍕 Percentuale Spesa Media (Grafico a Torta)")
-        fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
-        colors = ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#10b981', '#3a86ff']
-        wedges, texts, autotexts = ax.pie(
-            medie_df["Media"], 
-            labels=medie_df["Categoria"], 
-            autopct='%1.1f%%', 
-            pctdistance=0.72,
-            startangle=140,
-            colors=colors[:len(medie_df)],
-            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.5)
+        st.write("### 🍕 Percentuale Spesa Media (Interattivo)")
+        fig_pie_medie = px.pie(
+            medie_df, 
+            values="Media", 
+            names="Categoria", 
+            hole=0.4,
+            color_discrete_sequence=['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#3a86ff']
         )
-        plt.setp(autotexts, size=12, weight="bold", color="white")
-        plt.setp(texts, size=11, weight="bold")
-        ax.axis('equal')
-        plt.tight_layout()
-        st.pyplot(fig)
+        fig_pie_medie.update_traces(
+            textposition='inside', 
+            textinfo='percent+label',
+            textfont=dict(size=14, color='white', family='Arial Black'),
+            hovertemplate='<b>%{label}</b><br>Media: %{value:,.2f} €<br>Percentuale: %{percent}'
+        )
+        fig_pie_medie.update_layout(
+            margin=dict(t=20, b=20, l=10, r=10),
+            showlegend=True,
+            legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5)
+        )
+        st.plotly_chart(fig_pie_medie, use_container_width=True, config={'scrollZoom': True})
         
         st.write("")
         st.write("### 📈 Distribuzione per Categoria")
