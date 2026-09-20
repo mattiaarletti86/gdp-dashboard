@@ -15,7 +15,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏡 Spese & Casa - Arletti")
-st.markdown("💡 *Controllo bilancio, arredi, costi futuri, rendering e piano finanziario modificabile.*")
+st.markdown("💡 *Controllo bilancio, arredi, costi futuri, rendering e piano finanziario.*")
 
 file_path = "Spese casa -2.xlsx"
 
@@ -39,7 +39,6 @@ if "spese_future" not in st.session_state:
 if "room_renderings" not in st.session_state:
     st.session_state.room_renderings = {}
 
-# Salva una copia modificabile del piano casa nella sessione dell'app
 if "editable_casa" not in st.session_state:
     st.session_state.editable_casa = df_casa.copy()
 
@@ -49,7 +48,7 @@ menu = st.selectbox("📂 Scegli la sezione:", [
     "🖼️ Rendering & Planimetrie Stanze",
     "🎯 Simulatore Risparmio Mobili", 
     "🪑 Lista Mobili (15k €)", 
-    "🏠 Bilancio Nuova Casa (Modificabile)"
+    "🏠 Bilancio Nuova Casa"
 ])
 
 st.markdown("---")
@@ -205,14 +204,17 @@ elif menu == "🪑 Lista Mobili (15k €)":
     else:
         st.info("Nessun mobile trovato.")
 
-# --- 6. BILANCIO NUOVA CASA (MODIFICABILE) ---
-elif menu == "🏠 Bilancio Nuova Casa (Modificabile)":
-    st.subheader("🏠 Modifica Piano Finanziario Nuova Casa")
-    st.write("Puoi modificare direttamente i dati nella tabella sottostante per ricalcolare i costi e la liquidità in tempo reale.")
+# --- 6. BILANCIO NUOVA CASA (PULITO E MODIFICABILE) ---
+elif menu == "🏠 Bilancio Nuova Casa":
+    st.subheader("🏠 Piano Finanziario Nuova Casa")
+    st.write("Visualizzazione pulita e intuitiva del piano acquisto. Puoi anche modificare i valori direttamente se necessario.")
     
-    # Tabella interattiva e modificabile direttamente dall'utente
-    edited_df = st.data_editor(st.session_state.editable_casa, num_rows="dynamic", use_container_width=True)
+    # Puliamo il DataFrame rimuovendo le colonne e righe vuote ("NaN" / "None")
+    clean_df = st.session_state.editable_casa.dropna(how="all").dropna(axis=1, how="all")
+    
+    # Mostriamo la tabella pulita senza celle vuote fastidiose
+    edited_df = st.data_editor(clean_df, num_rows="dynamic", use_container_width=True, hide_index=True)
     st.session_state.editable_casa = edited_df
     
     if st.button("💾 Salva modifiche bilancio"):
-        st.success("✅ Modifiche al piano finanziario salvate con successo nella sessione corrente!")
+        st.success("✅ Modifiche salvate con successo nella sessione!")
