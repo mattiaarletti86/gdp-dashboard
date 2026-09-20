@@ -4,23 +4,19 @@ import streamlit as st
 # Configurazione pagina per cellulare con tema pulito
 st.set_page_config(page_title="Gestione Casa - Arletti", layout="centered", page_icon="🏡")
 
-# Stile CSS personalizzato per colori, card e pulsanti moderni
 st.markdown("""
 <style>
     .main { background-color: #f8fafc; }
     .stMetric { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 15px; border-radius: 14px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border-left: 6px solid #2563eb; }
-    .stAlert { border-radius: 12px; }
     div.stButton > button { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border-radius: 10px; font-weight: bold; border: none; padding: 10px 20px; width: 100%; }
-    div.stButton > button:hover { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); color: white; }
     h1 { color: #1e293b; font-weight: 800; font-size: 1.8rem !important; }
     h2, h3 { color: #334155; }
 </style>
 """, unsafe_allow_html=True)
 
 st.title("🏡 Spese & Casa - Arletti")
-st.markdown("💡 *Controllo bilancio, arredi e simulazione costi futuri.*")
+st.markdown("💡 *Controllo bilancio, arredi, costi futuri e rendering stanze.*")
 
-# Caricamento dati da Excel
 file_path = "Spese casa -2.xlsx"
 
 @st.cache_data
@@ -36,14 +32,17 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
 
-# Inizializzazione della memoria temporanea per i costi futuri
+# Inizializzazione session state per spese e rendering
 if "spese_future" not in st.session_state:
     st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
 
-# Menu di navigazione a tendina colorato e intuitivo
+if "room_renderings" not in st.session_state:
+    st.session_state.room_renderings = {}  # Dizionario per memorizzare i rendering per stanza
+
 menu = st.selectbox("📂 Scegli la sezione:", [
     "📊 Dashboard & Grafici Colori", 
     "➕ Inserisci Costi Futuri", 
+    "🖼️ Rendering & Planimetrie Stanze",
     "🎯 Simulatore Risparmio Mobili", 
     "🪑 Lista Mobili (15k €)", 
     "🏠 Bilancio Nuova Casa"
@@ -61,8 +60,6 @@ if menu == "📊 Dashboard & Grafici Colori":
         medie_df["Media"] = pd.to_numeric(medie_df["Media"])
         
         totale_medio = medie_df["Media"].sum()
-        
-        # Metrica principale in evidenza con design colorato
         st.metric(label="💳 Spesa Media Mensile Totale", value=f"{totale_medio:,.2f} €")
         
         st.write("")
@@ -131,7 +128,45 @@ elif menu == "➕ Inserisci Costi Futuri":
             st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
             st.rerun()
 
-# --- 3. SIMULATORE RISPARMIO ---
+# --- 3. RENDERING & PLANIMETRIE STANZE ---
+elif menu == "🖼️ Rendering & Planimetrie Stanze":
+    st.subheader("🖼️ Rendering & Planimetrie delle Stanze")
+    st.write("Carica e visualizza i rendering fotografici o le planimetrie di ogni ambiente.")
+    
+    stanza = st.selectbox("Seleziona Stanza / Ambiente:", [
+        "Cucina", 
+        "Salotto", 
+        "Ingresso / Armadio ingresso", 
+        "Camera Matrimoniale", 
+        "Camera Bimbe", 
+        "Bagno Piano Terra", 
+        "Bagno Ammezzato", 
+        "Bagno Piano Primo", 
+        "Mansarda", 
+        "Ripostiglio / Altro"
+    ])
+    
+    uploaded_files = st.file_uploader(f"Carica immagini / rendering per: {stanza}", type=["png", "jpg", "jpeg"], accept_multiple_files=True)
+    
+    if uploaded_files:
+        if stanza not in st.session_state.room_renderings:
+            st.session_state.room_renderings[stanza] = []
+        for file in uploaded_files:
+            if file not in st.session_state.room_renderings[stanza]:
+                st.session_state.room_renderings[stanza].append(file)
+                
+    # Visualizzazione galleria per la stanza selezionata
+    if stanza in st.session_state.room_renderings and st.session_state.room_renderings[stanza]:
+        st.markdown(f"### 📷 Immagini salvate per: *{stanza}*")
+        for i, img_file in enumerate(st.session_state.room_renderings[stanza]):
+            st.image(img_file, caption=f"{stanza} - Immagine {i+1}", use_column_width=True)
+            if st.button(f"Elimina immagine {i+1} da {stanza}", key=f"del_{stanza}_{i}"):
+                st.session_state.room_renderings[stanza].pop(i)
+                st.rerun()
+    else:
+        st.info(f"Nessun rendering caricato per {stanza.lower()}. Usa il pulsante sopra per caricarne uno direttamente dal cellulare!")
+
+# --- 4. SIMULATORE RISPARMIO ---
 elif menu == "🎯 Simulatore Risparmio Mobili":
     st.subheader("🎯 Simulatore Risparmio Arredi")
     st.write("Calcola quanto accantonare al mese per l'obiettivo arredi.")
@@ -149,7 +184,7 @@ elif menu == "🎯 Simulatore Risparmio Mobili":
     </div>
     """, unsafe_allow_html=True)
 
-# --- 4. LISTA MOBILI ---
+# --- 5. LISTA MOBILI ---
 elif menu == "🪑 Lista Mobili (15k €)":
     st.subheader("🪑 Controllo Mobili & Arredi")
     if not df_mobili.empty:
@@ -167,10 +202,10 @@ elif menu == "🪑 Lista Mobili (15k €)":
     else:
         st.info("Nessun mobile trovato.")
 
-# --- 5. BILANCIO NUOVA CASA ---
+# --- 6. BILANCIO NUOVA CASA ---
 elif menu == "🏠 Bilancio Nuova Casa":
     st.subheader("🏠 Piano Finanziario Nuova Casa")
     if not df_casa.empty:
-        st.dataframe(df_casa.dropna(how="all"), use_container_width=True)
+        st.dataframe(df_casa.dropna(how="all"), use_command_width=True)
     else:
         st.info("Dati non disponibili.")
