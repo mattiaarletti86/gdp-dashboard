@@ -115,25 +115,21 @@ if menu == "📜 Monitor Spese Mesi Precedenti":
     
     df_st = st.session_state.df_storico_editable
     
-    # 1. Menu a tendina per Periodo / Mese
+    # Menu a tendina per Periodo / Mese
     lista_mesi = ["Tutti i mesi / anni"] + sorted(list(df_st["Mese/Periodo"].unique()))
     mese_scelto = st.selectbox("🗓️ Seleziona il Periodo / Mese da menu a tendina:", options=lista_mesi)
     
-    # Filtraggio Mese
     df_filtrato = df_st if mese_scelto == "Tutti i mesi / anni" else df_st[df_st["Mese/Periodo"] == mese_scelto]
     
-    # 2. Menu a tendina per Categoria / Sottogruppo
+    # Menu a tendina per Categoria / Sottogruppo
     lista_cat = ["Tutte le categorie"] + sorted(list(df_filtrato["Categoria"].unique()))
     cat_scelta = st.selectbox("🏷️ Seleziona Categoria / Sottogruppo da menu a tendina:", options=lista_cat)
     
-    # Filtraggio Categoria
     if cat_scelta != "Tutte le categorie":
         df_filtrato = df_filtrato[df_filtrato["Categoria"] == cat_scelta]
         
-    # Calcolo Totale
     costo_totale = df_filtrato["Importo (€)"].sum()
     
-    # Visualizzazione Totale
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 18px; border-radius: 14px; border-left: 6px solid #2563eb; text-align: center; margin-bottom: 20px;">
         <span style="color: #1e40af; font-size: 1.1rem; font-weight: 600;">💰 Costo Totale Selezionato</span>
@@ -141,7 +137,7 @@ if menu == "📜 Monitor Spese Mesi Precedenti":
     </div>
     """, unsafe_allow_html=True)
     
-    # MODULO MODIFICA DA MENU A TENDINA
+    # Modifica da menu a tendina
     with st.expander("⚙️ Modifica un valore del mese selezionato tramite menu a tendina"):
         if not df_filtrato.empty:
             voce_mod = st.selectbox("Seleziona la voce da modificare:", options=df_filtrato["Categoria"].tolist())
@@ -158,23 +154,26 @@ if menu == "📜 Monitor Spese Mesi Precedenti":
             st.info("Nessuna voce presente per i filtri correnti.")
 
     if not df_filtrato.empty:
-        # GRAFICO A TORTA
         st.write("### 🍕 Percentuale Spese (Grafico a Torta)")
         grouped_data = df_filtrato.groupby("Categoria")["Importo (€)"].sum()
         
-        fig, ax = plt.subplots(figsize=(6, 5))
-        colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#1e40af', '#6366f1', '#818cf8', '#a5b4fc']
+        # Grafico a torta ad alta leggibilità per mobile
+        fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
+        colors = ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#10b981', '#3a86ff']
         
         wedges, texts, autotexts = ax.pie(
             grouped_data, 
             labels=grouped_data.index, 
             autopct='%1.1f%%', 
+            pctdistance=0.72,
             startangle=140,
             colors=colors[:len(grouped_data)],
-            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2)
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.5)
         )
-        plt.setp(autotexts, size=9, weight="bold", color="black")
-        plt.setp(texts, size=10)
+        # Testo percentuali grande, bianco e in grassetto
+        plt.setp(autotexts, size=12, weight="bold", color="white")
+        # Testo etichette grande e nitido
+        plt.setp(texts, size=11, weight="bold")
         ax.axis('equal')
         plt.tight_layout()
         st.pyplot(fig)
@@ -274,18 +273,19 @@ elif menu == "📊 Dashboard & Grafici Colori":
         
         st.write("")
         st.write("### 🍕 Percentuale Spesa Media (Grafico a Torta)")
-        fig, ax = plt.subplots(figsize=(6, 5))
-        colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#1e40af', '#6366f1', '#818cf8', '#a5b4fc']
+        fig, ax = plt.subplots(figsize=(7, 6), dpi=150)
+        colors = ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#10b981', '#3a86ff']
         wedges, texts, autotexts = ax.pie(
             medie_df["Media"], 
             labels=medie_df["Categoria"], 
             autopct='%1.1f%%', 
+            pctdistance=0.72,
             startangle=140,
             colors=colors[:len(medie_df)],
-            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2)
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=2.5)
         )
-        plt.setp(autotexts, size=9, weight="bold", color="black")
-        plt.setp(texts, size=10)
+        plt.setp(autotexts, size=12, weight="bold", color="white")
+        plt.setp(texts, size=11, weight="bold")
         ax.axis('equal')
         plt.tight_layout()
         st.pyplot(fig)
