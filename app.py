@@ -1,11 +1,24 @@
 import pandas as pd
 import streamlit as st
 
-# Configurazione pagina per cellulare
-st.set_page_config(page_title="Gestione Casa & Spese - Arletti", layout="centered")
+# Configurazione pagina per cellulare con tema pulito
+st.set_page_config(page_title="Gestione Casa - Arletti", layout="centered", page_icon="🏡")
+
+# Stile CSS personalizzato per colori, card e pulsanti moderni
+st.markdown("""
+<style>
+    .main { background-color: #f8fafc; }
+    .stMetric { background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 15px; border-radius: 14px; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); border-left: 6px solid #2563eb; }
+    .stAlert { border-radius: 12px; }
+    div.stButton > button { background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%); color: white; border-radius: 10px; font-weight: bold; border: none; padding: 10px 20px; width: 100%; }
+    div.stButton > button:hover { background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%); color: white; }
+    h1 { color: #1e293b; font-weight: 800; font-size: 1.8rem !important; }
+    h2, h3 { color: #334155; }
+</style>
+""", unsafe_allow_html=True)
 
 st.title("🏡 Spese & Casa - Arletti")
-st.write("Dashboard finanziaria, previsioni e inserimento costi futuri.")
+st.markdown("💡 *Controllo bilancio, arredi e simulazione costi futuri.*")
 
 # Caricamento dati da Excel
 file_path = "Spese casa -2.xlsx"
@@ -23,22 +36,24 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
 
-# Inizializzazione della memoria temporanea per i costi futuri aggiunti dall'utente
+# Inizializzazione della memoria temporanea per i costi futuri
 if "spese_future" not in st.session_state:
     st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
 
-# Menu di navigazione a tendina (ottimizzato per mobile)
-menu = st.selectbox("Seleziona sezione:", [
-    "📊 Dashboard & Grafici Visivi", 
+# Menu di navigazione a tendina colorato e intuitivo
+menu = st.selectbox("📂 Scegli la sezione:", [
+    "📊 Dashboard & Grafici Colori", 
     "➕ Inserisci Costi Futuri", 
     "🎯 Simulatore Risparmio Mobili", 
     "🪑 Lista Mobili (15k €)", 
     "🏠 Bilancio Nuova Casa"
 ])
 
-# --- 1. DASHBOARD & GRAFICI VISIVI ---
-if menu == "📊 Dashboard & Grafici Visivi":
-    st.subheader("Panoramica Visiva delle Spese")
+st.markdown("---")
+
+# --- 1. DASHBOARD & GRAFICI COLORI ---
+if menu == "📊 Dashboard & Grafici Colori":
+    st.subheader("📊 Panoramica Spese Medie")
     
     try:
         medie_df = df_costi.iloc[0:9, [14, 15]].dropna()
@@ -46,35 +61,43 @@ if menu == "📊 Dashboard & Grafici Visivi":
         medie_df["Media"] = pd.to_numeric(medie_df["Media"])
         
         totale_medio = medie_df["Media"].sum()
-        st.metric(label="Spesa Media Mensile Totale", value=f"{totale_medio:,.2f} €")
         
-        st.write("### Spesa Media per Categoria")
-        st.bar_chart(medie_df.set_index("Categoria"))
+        # Metrica principale in evidenza con design colorato
+        st.metric(label="💳 Spesa Media Mensile Totale", value=f"{totale_medio:,.2f} €")
+        
+        st.write("")
+        st.write("### 📈 Distribuzione per Categoria")
+        st.bar_chart(medie_df.set_index("Categoria"), color="#3b82f6")
         
         if not st.session_state.spese_future.empty:
-            st.write("### 📅 Costi Futuri Aggiunti")
+            st.markdown("---")
+            st.subheader("📅 Costi Futuri Programmabili")
             st.dataframe(st.session_state.spese_future, use_container_width=True)
             
             totale_futuro = st.session_state.spese_future["Importo (€)"].sum()
-            st.metric(label="Totale Costi Futuri Programmati", value=f"{totale_futuro:,.2f} €")
+            st.metric(label="📌 Totale Costi Futuri Aggiunti", value=f"{totale_futuro:,.2f} €")
             
     except Exception as e:
         st.error(f"Errore nella generazione dei grafici: {e}")
 
 # --- 2. INSERISCI COSTI FUTURI ---
 elif menu == "➕ Inserisci Costi Futuri":
-    st.subheader("Aggiungi Spesa o Costo Futuro")
-    st.write("Pianifica nuove spese suddividendole per categoria.")
+    st.subheader("➕ Pianifica Spesa Futura")
+    st.write("Aggiungi e suddividi i costi futuri per categoria.")
     
     with st.form("form_spesa_futura"):
-        mese_anno = st.selectbox("Mese di riferimento:", [
-            "Ottobre 2026", "Novembre 2026", "Dicembre 2026", 
-            "Gennaio 2027", "Febbraio 2027", "Marzo 2027", 
-            "Aprile 2027", "Maggio 2027", "Giugno 2027", "Luglio 2027", 
-            "Agosto 2027", "Settembre 2027", "Ottobre 2027"
-        ])
+        col1, col2 = st.columns(2)
+        with col1:
+            mese_anno = st.selectbox("Mese:", [
+                "Ottobre 2026", "Novembre 2026", "Dicembre 2026", 
+                "Gennaio 2027", "Febbraio 2027", "Marzo 2027", 
+                "Aprile 2027", "Maggio 2027", "Giugno 2027", "Luglio 2027", 
+                "Agosto 2027", "Settembre 2027", "Ottobre 2027"
+            ])
+        with col2:
+            importo = st.number_input("Importo [€]:", min_value=0.0, step=50.0, value=150.0)
         
-        categoria = st.selectbox("Categoria di spesa:", [
+        categoria = st.selectbox("Categoria:", [
             "Costo alimentare mensile", 
             "Tempo libero e viaggi", 
             "Utenze", 
@@ -86,10 +109,9 @@ elif menu == "➕ Inserisci Costi Futuri":
             "Arredi e Extra Nuova Casa"
         ])
         
-        importo = st.number_input("Importo previsto [€]:", min_value=0.0, step=50.0, value=100.0)
-        note = st.text_input("Note aggiuntive (opzionale):", "")
+        note = st.text_input("Note (es. negozio, descrizione):", "")
         
-        submitted = st.form_submit_button("Aggiungi alla previsione")
+        submitted = st.form_submit_button("Salva Spesa Futura")
         
         if submitted:
             nuova_riga = pd.DataFrame({
@@ -99,43 +121,55 @@ elif menu == "➕ Inserisci Costi Futuri":
                 "Note": [note]
             })
             st.session_state.spese_future = pd.concat([st.session_state.spese_future, nuova_riga], ignore_index=True)
-            st.success("Spesa futura aggiunta con successo!")
+            st.success("✅ Spesa futura aggiunta con successo!")
 
     if not st.session_state.spese_future.empty:
-        st.write("### Elenco Spese Future Inserite")
+        st.markdown("### 📋 Elenco Spese Inserite")
         st.dataframe(st.session_state.spese_future, use_container_width=True)
         
-        if st.button("Pulisci elenco spese future"):
+        if st.button("🗑️ Svuota elenco costi futuri"):
             st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
             st.rerun()
 
 # --- 3. SIMULATORE RISPARMIO ---
 elif menu == "🎯 Simulatore Risparmio Mobili":
-    st.subheader("Simulatore Risparmio Arredi")
-    st.write("Calcola il risparmio mensile per arrivare a ottobre 2027.")
+    st.subheader("🎯 Simulatore Risparmio Arredi")
+    st.write("Calcola quanto accantonare al mese per l'obiettivo arredi.")
     
     obiettivo = st.number_input("Costo totale obiettivo [€]:", value=15000.0, step=500.0)
     mesi = st.slider("Mesi rimanenti:", min_value=1, max_value=36, value=13)
     
     risparmio_mensile = obiettivo / mesi
-    st.success(f"💡 Per l'obiettivo di **{obiettivo:,.2f} €** in **{mesi} mesi**, devi risparmiare:\n### **{risparmio_mensile:,.2f} € al mese**")
+    
+    st.markdown(f"""
+    <div style="background: linear-gradient(135deg, #ecfdf5 0%, #d1fae5 100%); padding: 20px; border-radius: 14px; border-left: 6px solid #10b981; text-align: center;">
+        <h3 style="color: #065f46; margin: 0;">Obiettivo: {obiettivo:,.2f} € in {mesi} mesi</h3>
+        <p style="color: #047857; font-size: 1.1rem; margin-top: 10px;">Risparmio mensile consigliato:</p>
+        <h2 style="color: #047857; font-size: 2.2rem; margin: 0;">{risparmio_mensile:,.2f} € / mese</h2>
+    </div>
+    """, unsafe_allow_html=True)
 
 # --- 4. LISTA MOBILI ---
 elif menu == "🪑 Lista Mobili (15k €)":
-    st.subheader("Controllo Mobili & Arredi")
+    st.subheader("🪑 Controllo Mobili & Arredi")
     if not df_mobili.empty:
         mobili_clean = df_mobili.iloc[:, [0, 1, 3]].dropna(how="all")
         mobili_clean.columns = ["Articolo", "Costo", "Negozio"]
+        
         for index, row in mobili_clean.iterrows():
-            st.container()
-            st.write(f"**{row['Articolo']}** — 💰 {row['Costo']} €  \n🏪 *Negozio: {row['Negozio']}*")
-            st.divider()
+            st.markdown(f"""
+            <div style="background: white; padding: 14px; border-radius: 12px; margin-bottom: 10px; border: 1px solid #e2e8f0; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+                <b style="color: #1e293b; font-size: 1.05rem;">{row['Articolo']}</b><br>
+                <span style="color: #2563eb; font-weight: bold;">💰 {row['Costo']} €</span> &nbsp;|&nbsp; 
+                <span style="color: #64748b; font-style: italic;">🏪 {row['Negozio']}</span>
+            </div>
+            """, unsafe_allow_html=True)
     else:
         st.info("Nessun mobile trovato.")
 
 # --- 5. BILANCIO NUOVA CASA ---
 elif menu == "🏠 Bilancio Nuova Casa":
-    st.subheader("Piano Finanziario Nuova Casa")
+    st.subheader("🏠 Piano Finanziario Nuova Casa")
     if not df_casa.empty:
         st.dataframe(df_casa.dropna(how="all"), use_container_width=True)
     else:
