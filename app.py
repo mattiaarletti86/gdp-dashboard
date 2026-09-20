@@ -1,7 +1,6 @@
-import json
 import pandas as pd
 import streamlit as st
-import streamlit.components.v1 as components
+import matplotlib.pyplot as plt
 
 # Configurazione pagina per cellulare
 st.set_page_config(page_title="Gestione Casa - Arletti", layout="centered", page_icon="🏡")
@@ -32,49 +31,6 @@ try:
 except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
-
-# Funzione per generare il grafico a torta zoomabile con le dita
-def render_zoomable_pie_chart(labels, values):
-    data_json = json.dumps([{
-        "labels": list(labels),
-        "values": list(values),
-        "type": "pie",
-        "hole": 0.4,
-        "textinfo": "percent+label",
-        "textposition": "inside",
-        "insidetextfont": {"color": "#FFFFFF", "size": 14, "family": "Arial Black"},
-        "hovertemplate": "<b>%{label}</b><br>Importo: %{value:,.2f} €<br>Percentuale: %{percent}<extra></extra>",
-        "marker": {"colors": ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#3a86ff']}
-    }])
-    
-    layout_json = json.dumps({
-        "margin": {"t": 20, "b": 20, "l": 10, "r": 10},
-        "showlegend": True,
-        "legend": {"orientation": "h", "y": -0.2, "x": 0.5, "xanchor": "center"}
-    })
-    
-    html_code = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <script src="https://cdn.plot.ly/plotly-2.27.0.min.js"></script>
-        <style>
-            body {{ margin: 0; padding: 0; background-color: transparent; }}
-            #chart {{ width: 100%; height: 420px; }}
-        </style>
-    </head>
-    <body>
-        <div id="chart"></div>
-        <script>
-            var data = {data_json};
-            var layout = {layout_json};
-            var config = {{responsive: true, scrollZoom: true, displayModeBar: true, modeBarButtonsToRemove: ['toImage']}};
-            Plotly.newPlot('chart', data, layout, config);
-        </script>
-    </body>
-    </html>
-    """
-    components.html(html_code, height=440)
 
 # Estrazione dello storico spese
 @st.cache_data
@@ -153,7 +109,7 @@ menu = st.selectbox("📂 Scegli la sezione:", [
 
 st.markdown("---")
 
-# --- 1. MONITOR MESI PRECEDENTI CON GRAFICO ZOOMABILE ---
+# --- 1. MONITOR MESI PRECEDENTI ---
 if menu == "📜 Monitor Spese Mesi Precedenti":
     st.subheader("📜 Monitor Spese Mesi & Anni Precedenti")
     
@@ -195,15 +151,30 @@ if menu == "📜 Monitor Spese Mesi Precedenti":
             st.info("Nessuna voce presente per i filtri correnti.")
 
     if not df_filtrato.empty:
-        st.write("### 🍕 Percentuale Spese (Ingrandibile con due dita 🤏)")
-        grouped_data = df_filtrato.groupby("Categoria", as_index=False)["Importo (€)"].sum()
+        st.write("### 🍕 Percentuale Spese per Categoria")
+        grouped_data = df_filtrato.groupby("Categoria")["Importo (€)"].sum()
         
-        # Rendering Grafico Zoomabile con le Dita
-        render_zoomable_pie_chart(grouped_data["Categoria"], grouped_data["Importo (€)"])
+        fig, ax = plt.subplots(figsize=(8, 7), dpi=160)
+        colors = ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#3a86ff']
+        
+        wedges, texts, autotexts = ax.pie(
+            grouped_data, 
+            labels=grouped_data.index, 
+            autopct='%1.1f%%', 
+            pctdistance=0.7,
+            startangle=140,
+            colors=colors[:len(grouped_data)],
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=3)
+        )
+        plt.setp(autotexts, size=13, weight="bold", color="white")
+        plt.setp(texts, size=11, weight="bold")
+        ax.axis('equal')
+        plt.tight_layout()
+        st.pyplot(fig)
         
         st.markdown("---")
         st.write("### 📈 Istogramma Distribuzione Spese")
-        st.bar_chart(grouped_data.set_index("Categoria"), color="#2563eb")
+        st.bar_chart(grouped_data, color="#2563eb")
         
         st.write("### 📋 Dettaglio Spese Filtrate")
         st.dataframe(df_filtrato, use_container_width=True, hide_index=True)
@@ -295,8 +266,23 @@ elif menu == "📊 Dashboard & Grafici Colori":
         st.metric(label="💳 Spesa Media Mensile Totale", value=f"{totale_medio:,.2f} €")
         
         st.write("")
-        st.write("### 🍕 Percentuale Spesa Media (Ingrandibile con due dita 🤏)")
-        render_zoomable_pie_chart(medie_df["Categoria"], medie_df["Media"])
+        st.write("### 🍕 Percentuale Spesa Media")
+        fig, ax = plt.subplots(figsize=(8, 7), dpi=160)
+        colors = ['#2563eb', '#3b82f6', '#10b981', '#f59e0b', '#8b5cf6', '#ec4899', '#6366f1', '#3a86ff']
+        wedges, texts, autotexts = ax.pie(
+            medie_df["Media"], 
+            labels=medie_df["Categoria"], 
+            autopct='%1.1f%%', 
+            pctdistance=0.7,
+            startangle=140,
+            colors=colors[:len(medie_df)],
+            wedgeprops=dict(width=0.45, edgecolor='white', linewidth=3)
+        )
+        plt.setp(autotexts, size=13, weight="bold", color="white")
+        plt.setp(texts, size=11, weight="bold")
+        ax.axis('equal')
+        plt.tight_layout()
+        st.pyplot(fig)
         
         st.write("")
         st.write("### 📈 Distribuzione per Categoria")
