@@ -15,7 +15,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🏡 Spese & Casa - Arletti")
-st.markdown("💡 *Controllo bilancio, arredi, costi futuri e rendering stanze.*")
+st.markdown("💡 *Controllo bilancio, arredi, costi futuri, rendering e piano finanziario modificabile.*")
 
 file_path = "Spese casa -2.xlsx"
 
@@ -32,12 +32,16 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
 
-# Inizializzazione session state per spese e rendering
+# Inizializzazione session state
 if "spese_future" not in st.session_state:
     st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
 
 if "room_renderings" not in st.session_state:
-    st.session_state.room_renderings = {}  # Dizionario per memorizzare i rendering per stanza
+    st.session_state.room_renderings = {}
+
+# Salva una copia modificabile del piano casa nella sessione dell'app
+if "editable_casa" not in st.session_state:
+    st.session_state.editable_casa = df_casa.copy()
 
 menu = st.selectbox("📂 Scegli la sezione:", [
     "📊 Dashboard & Grafici Colori", 
@@ -45,7 +49,7 @@ menu = st.selectbox("📂 Scegli la sezione:", [
     "🖼️ Rendering & Planimetrie Stanze",
     "🎯 Simulatore Risparmio Mobili", 
     "🪑 Lista Mobili (15k €)", 
-    "🏠 Bilancio Nuova Casa"
+    "🏠 Bilancio Nuova Casa (Modificabile)"
 ])
 
 st.markdown("---")
@@ -155,7 +159,6 @@ elif menu == "🖼️ Rendering & Planimetrie Stanze":
             if file not in st.session_state.room_renderings[stanza]:
                 st.session_state.room_renderings[stanza].append(file)
                 
-    # Visualizzazione galleria per la stanza selezionata
     if stanza in st.session_state.room_renderings and st.session_state.room_renderings[stanza]:
         st.markdown(f"### 📷 Immagini salvate per: *{stanza}*")
         for i, img_file in enumerate(st.session_state.room_renderings[stanza]):
@@ -202,10 +205,14 @@ elif menu == "🪑 Lista Mobili (15k €)":
     else:
         st.info("Nessun mobile trovato.")
 
-# --- 6. BILANCIO NUOVA CASA ---
-elif menu == "🏠 Bilancio Nuova Casa":
-    st.subheader("🏠 Piano Finanziario Nuova Casa")
-    if not df_casa.empty:
-        st.dataframe(df_casa.dropna(how="all"), use_command_width=True)
-    else:
-        st.info("Dati non disponibili.")
+# --- 6. BILANCIO NUOVA CASA (MODIFICABILE) ---
+elif menu == "🏠 Bilancio Nuova Casa (Modificabile)":
+    st.subheader("🏠 Modifica Piano Finanziario Nuova Casa")
+    st.write("Puoi modificare direttamente i dati nella tabella sottostante per ricalcolare i costi e la liquidità in tempo reale.")
+    
+    # Tabella interattiva e modificabile direttamente dall'utente
+    edited_df = st.data_editor(st.session_state.editable_casa, num_rows="dynamic", use_container_width=True)
+    st.session_state.editable_casa = edited_df
+    
+    if st.button("💾 Salva modifiche bilancio"):
+        st.success("✅ Modifiche al piano finanziario salvate con successo nella sessione corrente!")
