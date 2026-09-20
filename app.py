@@ -1,7 +1,7 @@
 import pandas as pd
 import streamlit as st
 
-# Configurazione pagina per cellulare con tema pulito
+# Configurazione pagina per cellulare
 st.set_page_config(page_title="Gestione Casa - Arletti", layout="centered", page_icon="🏡")
 
 st.markdown("""
@@ -23,40 +23,105 @@ file_path = "Spese casa -2.xlsx"
 def load_data():
     df_costi = pd.read_excel(file_path, sheet_name="Costi famiglia")
     df_mobili = pd.read_excel(file_path, sheet_name="Mobili", skiprows=1)
-    df_casa = pd.read_excel(file_path, sheet_name="Piano acquisto nuova casa")
-    return df_costi, df_mobili, df_casa
+    return df_costi, df_mobili
 
 try:
-    df_costi, df_mobili, df_casa = load_data()
+    df_costi, df_mobili = load_data()
 except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
 
-# Inizializzazione session state
+# Inizializzazione Session State per Spese Future e Rendering
 if "spese_future" not in st.session_state:
     st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
 
 if "room_renderings" not in st.session_state:
     st.session_state.room_renderings = {}
 
-if "editable_casa" not in st.session_state:
-    st.session_state.editable_casa = df_casa.copy()
+# Inizializzazione Tabella Costi Pulita e Modificabile
+if "piano_costi" not in st.session_state:
+    st.session_state.piano_costi = pd.DataFrame([
+        {"Voce di Spesa": "Costo acquisto casa", "Importo (€)": 400000.0},
+        {"Voce di Spesa": "Costo acquisto garage", "Importo (€)": 25000.0},
+        {"Voce di Spesa": "IVA su acquisto casa", "Importo (€)": 16000.0},
+        {"Voce di Spesa": "Trasloco", "Importo (€)": 5000.0},
+        {"Voce di Spesa": "Istruttoria mutuo", "Importo (€)": 2000.0},
+        {"Voce di Spesa": "Notaio", "Importo (€)": 10000.0},
+        {"Voce di Spesa": "Acquisto mobili", "Importo (€)": 4785.0},
+        {"Voce di Spesa": "Allacciamenti", "Importo (€)": 1000.0},
+        {"Voce di Spesa": "Fuori capitolato", "Importo (€)": 5000.0},
+        {"Voce di Spesa": "Ristrutturazione & Opere Extra", "Importo (€)": 124000.0}
+    ])
+
+# Inizializzazione Tabella Entrate / Liquidità
+if "piano_ricavi" not in st.session_state:
+    st.session_state.piano_ricavi = pd.DataFrame([
+        {"Fonte / Entrata": "Vendita casa / Liquidità disponibile", "Importo (€)": 381000.0},
+        {"Fonte / Entrata": "Mutuo o Risparmi dedicati", "Importo (€)": 200000.0}
+    ])
 
 menu = st.selectbox("📂 Scegli la sezione:", [
+    "🏠 Bilancio Nuova Casa (Modificabile)",
     "📊 Dashboard & Grafici Colori", 
     "➕ Inserisci Costi Futuri", 
     "🖼️ Rendering & Planimetrie Stanze",
     "🎯 Simulatore Risparmio Mobili", 
-    "🪑 Lista Mobili (15k €)", 
-    "🏠 Bilancio Nuova Casa"
+    "🪑 Lista Mobili (15k €)"
 ])
 
 st.markdown("---")
 
-# --- 1. DASHBOARD & GRAFICI COLORI ---
-if menu == "📊 Dashboard & Grafici Colori":
-    st.subheader("📊 Panoramica Spese Medie")
+# --- 1. BILANCIO NUOVA CASA ---
+if menu == "🏠 Bilancio Nuova Casa (Modificabile)":
+    st.subheader("🏠 Piano Finanziario Nuova Casa")
+    st.write("Modifica gli importi o aggiungi nuove voci per ricalcolare il saldo finale.")
     
+    # Calcolo totali dinamici
+    tot_costi = st.session_state.piano_costi["Importo (€)"].sum()
+    tot_ricavi = st.session_state.piano_ricavi["Importo (€)"].sum()
+    netto_residuo = tot_ricavi - tot_costi
+    
+    # Metriche riassuntive visive
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric(label="🔴 Totale Costi", value=f"{tot_costi:,.0f} €")
+    with col2:
+        st.metric(label="🟢 Totale Entrate", value=f"{tot_ricavi:,.0f} €")
+    with col3:
+        st.metric(label="🔵 Netto Residuo", value=f"{netto_residuo:,.0f} €")
+        
+    st.markdown("---")
+    
+    # Tabella 1: COSTI ACQUISTO E LAVORI
+    st.write("### 🔴 1. Uscite e Costi Previsti")
+    edited_costi = st.data_editor(
+        st.session_state.piano_costi, 
+        num_rows="dynamic", 
+        use_container_width=True, 
+        hide_index=True,
+        key="editor_costi"
+    )
+    st.session_state.piano_costi = edited_costi
+
+    st.markdown("---")
+
+    # Tabella 2: ENTRATE E MUTUO
+    st.write("### 🟢 2. Entrate, Mutuo e Coperture")
+    edited_ricavi = st.data_editor(
+        st.session_state.piano_ricavi, 
+        num_rows="dynamic", 
+        use_container_width=True, 
+        hide_index=True,
+        key="editor_ricavi"
+    )
+    st.session_state.piano_ricavi = edited_ricavi
+
+    if st.button("🔄 Aggiorna e Ricalcola Saldo"):
+        st.rerun()
+
+# --- 2. DASHBOARD & GRAFICI COLORI ---
+elif menu == "📊 Dashboard & Grafici Colori":
+    st.subheader("📊 Panoramica Spese Medie")
     try:
         medie_df = df_costi.iloc[0:9, [14, 15]].dropna()
         medie_df.columns = ["Categoria", "Media"]
@@ -80,7 +145,7 @@ if menu == "📊 Dashboard & Grafici Colori":
     except Exception as e:
         st.error(f"Errore nella generazione dei grafici: {e}")
 
-# --- 2. INSERISCI COSTI FUTURI ---
+# --- 3. INSERISCI COSTI FUTURI ---
 elif menu == "➕ Inserisci Costi Futuri":
     st.subheader("➕ Pianifica Spesa Futura")
     st.write("Aggiungi e suddividi i costi futuri per categoria.")
@@ -110,7 +175,6 @@ elif menu == "➕ Inserisci Costi Futuri":
         ])
         
         note = st.text_input("Note (es. negozio, descrizione):", "")
-        
         submitted = st.form_submit_button("Salva Spesa Futura")
         
         if submitted:
@@ -131,7 +195,7 @@ elif menu == "➕ Inserisci Costi Futuri":
             st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
             st.rerun()
 
-# --- 3. RENDERING & PLANIMETRIE STANZE ---
+# --- 4. RENDERING & PLANIMETRIE STANZE ---
 elif menu == "🖼️ Rendering & Planimetrie Stanze":
     st.subheader("🖼️ Rendering & Planimetrie delle Stanze")
     st.write("Carica e visualizza i rendering fotografici o le planimetrie di ogni ambiente.")
@@ -156,7 +220,6 @@ elif menu == "🖼️ Rendering & Planimetrie Stanze":
             st.session_state.room_renderings[stanza] = []
         for file in uploaded_files:
             file_bytes = file.getvalue()
-            # Salvataggio sicuro in formato Byte
             if not any(item["name"] == file.name for item in st.session_state.room_renderings[stanza]):
                 st.session_state.room_renderings[stanza].append({"name": file.name, "bytes": file_bytes})
                 
@@ -168,9 +231,9 @@ elif menu == "🖼️ Rendering & Planimetrie Stanze":
                 st.session_state.room_renderings[stanza].pop(i)
                 st.rerun()
     else:
-        st.info(f"Nessun rendering caricato per {stanza.lower()}. Usa il pulsante sopra per caricarne uno direttamente dal cellulare!")
+        st.info(f"Nessun rendering caricato per {stanza.lower()}. Usa il pulsante sopra per caricarne uno dal cellulare!")
 
-# --- 4. SIMULATORE RISPARMIO ---
+# --- 5. SIMULATORE RISPARMIO ---
 elif menu == "🎯 Simulatore Risparmio Mobili":
     st.subheader("🎯 Simulatore Risparmio Arredi")
     st.write("Calcola quanto accantonare al mese per l'obiettivo arredi.")
@@ -188,7 +251,7 @@ elif menu == "🎯 Simulatore Risparmio Mobili":
     </div>
     """, unsafe_allow_html=True)
 
-# --- 5. LISTA MOBILI ---
+# --- 6. LISTA MOBILI ---
 elif menu == "🪑 Lista Mobili (15k €)":
     st.subheader("🪑 Controllo Mobili & Arredi")
     if not df_mobili.empty:
@@ -205,15 +268,3 @@ elif menu == "🪑 Lista Mobili (15k €)":
             """, unsafe_allow_html=True)
     else:
         st.info("Nessun mobile trovato.")
-
-# --- 6. BILANCIO NUOVA CASA ---
-elif menu == "🏠 Bilancio Nuova Casa":
-    st.subheader("🏠 Piano Finanziario Nuova Casa")
-    st.write("Visualizzazione pulita e intuitiva del piano acquisto.")
-    
-    clean_df = st.session_state.editable_casa.dropna(how="all").dropna(axis=1, how="all")
-    edited_df = st.data_editor(clean_df, num_rows="dynamic", use_container_width=True, hide_index=True)
-    st.session_state.editable_casa = edited_df
-    
-    if st.button("💾 Salva modifiche bilancio"):
-        st.success("✅ Modifiche salvate con successo nella sessione!")
