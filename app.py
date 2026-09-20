@@ -32,7 +32,7 @@ except Exception as e:
     st.error(f"Errore nel caricamento del file Excel: {e}")
     st.stop()
 
-# Estrazione e pulizia dello storico spese per periodo e sottogruppo
+# Estrazione dello storico spese
 @st.cache_data
 def parse_storico_spese(df_costi):
     records = []
@@ -61,14 +61,16 @@ def parse_storico_spese(df_costi):
         df_parsed = pd.DataFrame([
             {"Mese/Periodo": "Ottobre 2025", "Categoria": "Costo alimentare mensile", "Sottogruppo": "Supermercato", "Importo (€)": 883.14},
             {"Mese/Periodo": "Ottobre 2025", "Categoria": "Utenze", "Sottogruppo": "Luce & Gas", "Importo (€)": 309.71},
+            {"Mese/Periodo": "Ottobre 2025", "Categoria": "Trasporti e auto", "Sottogruppo": "Carburante", "Importo (€)": 231.76},
             {"Mese/Periodo": "Novembre 2025", "Categoria": "Costo alimentare mensile", "Sottogruppo": "Supermercato", "Importo (€)": 820.00},
             {"Mese/Periodo": "Novembre 2025", "Categoria": "Trasporti e auto", "Sottogruppo": "Carburante", "Importo (€)": 210.50},
         ])
     return df_parsed
 
-df_storico = parse_storico_spese(df_costi)
+# Session State
+if "df_storico_editable" not in st.session_state:
+    st.session_state.df_storico_editable = parse_storico_spese(df_costi)
 
-# Inizializzazione Session State
 if "spese_future" not in st.session_state:
     st.session_state.spese_future = pd.DataFrame(columns=["Mese/Anno", "Categoria", "Importo (€)", "Note"])
 
@@ -96,8 +98,8 @@ if "piano_ricavi" not in st.session_state:
     ])
 
 menu = st.selectbox("📂 Scegli la sezione:", [
-    "📜 Monitor Mesi Precedenti & Filtri",
-    "🏠 Bilancio Nuova Casa (Modificabile)",
+    "📜 Monitor Spese Mesi Precedenti",
+    "🏠 Bilancio Nuova Casa (Modifica Facile)",
     "📊 Dashboard & Grafici Colori", 
     "➕ Inserisci Costi Futuri", 
     "🖼️ Rendering & Planimetrie Stanze",
@@ -107,39 +109,58 @@ menu = st.selectbox("📂 Scegli la sezione:", [
 
 st.markdown("---")
 
-# --- 1. MONITOR MESI PRECEDENTI & FILTRI ---
-if menu == "📜 Monitor Mesi Precedenti & Filtri":
-    st.subheader("📜 Monitor Spese Mesi Precedenti")
-    st.write("Filtra per periodo e sottogruppo per visualizzare i costi e il totale calcolato.")
+# --- 1. MONITOR MESI PRECEDENTI CON MENU A TENDINA ---
+if menu == "📜 Monitor Spese Mesi Precedenti":
+    st.subheader("📜 Monitor Spese Mesi & Anni Precedenti")
     
-    # 1. Filtro Mese / Periodo
-    lista_mesi = sorted(list(df_storico["Mese/Periodo"].unique()))
-    mesi_selezionati = st.multiselect("🗓️ Seleziona Periodo / Mesi:", options=lista_mesi, default=lista_mesi)
+    df_st = st.session_state.df_storico_editable
     
-    # 2. Filtro Categoria / Sottogruppo
-    df_filtrato_mesi = df_storico[df_storico["Mese/Periodo"].isin(mesi_selezionati)] if mesi_selezionati else df_storico
-    lista_categorie = sorted(list(df_filtrato_mesi["Categoria"].unique()))
+    # 1. Menu a tendina per Periodo / Mese
+    lista_mesi = ["Tutti i mesi / anni"] + sorted(list(df_st["Mese/Periodo"].unique()))
+    mese_scelto = st.selectbox("🗓️ Seleziona il Periodo / Mese da menu a tendina:", options=lista_mesi)
     
-    categorie_selezionate = st.multiselect("🏷️ Seleziona Categoria / Sottogruppo:", options=lista_categorie, default=lista_categorie)
+    # Filtraggio Mese
+    df_filtrato = df_st if mese_scelto == "Tutti i mesi / anni" else df_st[df_st["Mese/Periodo"] == mese_scelto]
     
-    # Applicazione filtri
-    df_finale = df_filtrato_mesi[df_filtrato_mesi["Categoria"].isin(categorie_selezionate)]
+    # 2. Menu a tendina per Categoria / Sottogruppo
+    lista_cat = ["Tutte le categorie"] + sorted(list(df_filtrato["Categoria"].unique()))
+    cat_scelta = st.selectbox("🏷️ Seleziona Categoria / Sottogruppo da menu a tendina:", options=lista_cat)
     
+    # Filtraggio Categoria
+    if cat_scelta != "Tutte le categorie":
+        df_filtrato = df_filtrato[df_filtrato["Categoria"] == cat_scelta]
+        
     # Calcolo Totale
-    costo_totale = df_finale["Importo (€)"].sum()
+    costo_totale = df_filtrato["Importo (€)"].sum()
     
-    # Visualizzazione del Totale in Evidenza
+    # Visualizzazione Totale
     st.markdown(f"""
     <div style="background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%); padding: 18px; border-radius: 14px; border-left: 6px solid #2563eb; text-align: center; margin-bottom: 20px;">
-        <span style="color: #1e40af; font-size: 1.1rem; font-weight: 600;">💰 Costo Totale del Periodo Selezionato</span>
+        <span style="color: #1e40af; font-size: 1.1rem; font-weight: 600;">💰 Costo Totale Selezionato</span>
         <h2 style="color: #1d4ed8; font-size: 2.3rem; margin: 5px 0 0 0;">{costo_totale:,.2f} €</h2>
     </div>
     """, unsafe_allow_html=True)
     
-    if not df_finale.empty:
-        # GRAFICO A TORTA / CIAMBELLA PER PERCENTUALI
-        st.write("### 🍕 Percentuale Spese per Categoria (Grafico a Torta)")
-        grouped_data = df_finale.groupby("Categoria")["Importo (€)"].sum()
+    # MODULO MODIFICA DA MENU A TENDINA
+    with st.expander("⚙️ Modifica un valore del mese selezionato tramite menu a tendina"):
+        if not df_filtrato.empty:
+            voce_mod = st.selectbox("Seleziona la voce da modificare:", options=df_filtrato["Categoria"].tolist())
+            idx_mod = df_filtrato[df_filtrato["Categoria"] == voce_mod].index[0]
+            val_att = float(st.session_state.df_storico_editable.at[idx_mod, "Importo (€)"])
+            
+            nuovo_val = st.number_input("Imposta nuovo importo [€]:", value=val_att, step=10.0)
+            
+            if st.button("💾 Salva Modifica Spesa Passata"):
+                st.session_state.df_storico_editable.at[idx_mod, "Importo (€)"] = nuovo_val
+                st.success(f"✅ Aggiornata spesa '{voce_mod}' a {nuovo_val:,.2f} €")
+                st.rerun()
+        else:
+            st.info("Nessuna voce presente per i filtri correnti.")
+
+    if not df_filtrato.empty:
+        # GRAFICO A TORTA
+        st.write("### 🍕 Percentuale Spese (Grafico a Torta)")
+        grouped_data = df_filtrato.groupby("Categoria")["Importo (€)"].sum()
         
         fig, ax = plt.subplots(figsize=(6, 5))
         colors = ['#2563eb', '#3b82f6', '#60a5fa', '#93c5fd', '#1d4ed8', '#1e40af', '#6366f1', '#818cf8', '#a5b4fc']
@@ -163,14 +184,13 @@ if menu == "📜 Monitor Mesi Precedenti & Filtri":
         st.bar_chart(grouped_data, color="#2563eb")
         
         st.write("### 📋 Dettaglio Spese Filtrate")
-        st.dataframe(df_finale, use_container_width=True, hide_index=True)
+        st.dataframe(df_filtrato, use_container_width=True, hide_index=True)
     else:
         st.warning("Nessuna spesa trovata per i filtri selezionati.")
 
 # --- 2. BILANCIO NUOVA CASA ---
-elif menu == "🏠 Bilancio Nuova Casa (Modificabile)":
+elif menu == "🏠 Bilancio Nuova Casa (Modifica Facile)":
     st.subheader("🏠 Piano Finanziario Nuova Casa")
-    st.write("Modifica gli importi o aggiungi nuove voci per ricalcolare il saldo finale.")
     
     tot_costi = st.session_state.piano_costi["Importo (€)"].sum()
     tot_ricavi = st.session_state.piano_ricavi["Importo (€)"].sum()
@@ -186,30 +206,60 @@ elif menu == "🏠 Bilancio Nuova Casa (Modificabile)":
         
     st.markdown("---")
     
-    st.write("### 🔴 1. Uscite e Costi Previsti")
-    edited_costi = st.data_editor(
-        st.session_state.piano_costi, 
-        num_rows="dynamic", 
-        use_container_width=True, 
-        hide_index=True,
-        key="editor_costi"
-    )
-    st.session_state.piano_costi = edited_costi
+    st.write("### ⚙️ Modifica Dati da Menu a Tendina")
+    azione = st.selectbox("Seleziona cosa vuoi fare:", [
+        "✏️ Modifica un importo esistente",
+        "➕ Aggiungi una nuova voce",
+        "🗑️ Elimina una voce"
+    ])
+    
+    sezione = st.radio("Scegli la tabella:", ["🔴 Costi & Uscite", "🟢 Entrate & Coperture"], horizontal=True)
+    
+    df_target = st.session_state.piano_costi if "Costi" in sezione else st.session_state.piano_ricavi
+    col_nome = "Voce di Spesa" if "Costi" in sezione else "Fonte / Entrata"
+    
+    if azione == "✏️ Modifica un importo esistente":
+        voce_scelta = st.selectbox(f"Seleziona la voce da modificare ({col_nome}):", options=df_target[col_nome].tolist())
+        val_attuale = float(df_target[df_target[col_nome] == voce_scelta]["Importo (€)"].values[0])
+        nuovo_importo = st.number_input("Inserisci il nuovo importo [€]:", value=val_attuale, step=500.0)
+        
+        if st.button("💾 Salva Modifica Importo"):
+            idx = df_target[df_target[col_nome] == voce_scelta].index[0]
+            df_target.at[idx, "Importo (€)"] = nuovo_importo
+            st.success(f"✅ Aggiornato '{voce_scelta}' a {nuovo_importo:,.2f} €")
+            st.rerun()
+
+    elif azione == "➕ Aggiungi una nuova voce":
+        nuovo_nome = st.text_input(f"Nome della nuova voce ({col_nome}):", "")
+        nuovo_imp = st.number_input("Importo [€]:", min_value=0.0, value=1000.0, step=500.0)
+        
+        if st.button("➕ Aggiungi alla lista"):
+            if nuovo_nome.strip():
+                nuova_riga = pd.DataFrame([{col_nome: nuovo_nome.strip(), "Importo (€)": nuovo_imp}])
+                if "Costi" in sezione:
+                    st.session_state.piano_costi = pd.concat([st.session_state.piano_costi, nuova_riga], ignore_index=True)
+                else:
+                    st.session_state.piano_ricavi = pd.concat([st.session_state.piano_ricavi, nuova_riga], ignore_index=True)
+                st.success(f"✅ Aggiunta nuova voce '{nuovo_nome}'!")
+                st.rerun()
+
+    elif azione == "🗑️ Elimina una voce":
+        voce_da_del = st.selectbox(f"Seleziona la voce da eliminare ({col_nome}):", options=df_target[col_nome].tolist())
+        
+        if st.button("🗑️ Rimuovi Voce"):
+            if "Costi" in sezione:
+                st.session_state.piano_costi = st.session_state.piano_costi[st.session_state.piano_costi[col_nome] != voce_da_del].reset_index(drop=True)
+            else:
+                st.session_state.piano_ricavi = st.session_state.piano_ricavi[st.session_state.piano_ricavi[col_nome] != voce_da_del].reset_index(drop=True)
+            st.success(f"🗑️ Voce '{voce_da_del}' rimossa con successo!")
+            st.rerun()
 
     st.markdown("---")
+    st.write("### 🔴 1. Riepilogo Costi & Uscite")
+    st.dataframe(st.session_state.piano_costi, use_container_width=True, hide_index=True)
 
-    st.write("### 🟢 2. Entrate, Mutuo e Coperture")
-    edited_ricavi = st.data_editor(
-        st.session_state.piano_ricavi, 
-        num_rows="dynamic", 
-        use_container_width=True, 
-        hide_index=True,
-        key="editor_ricavi"
-    )
-    st.session_state.piano_ricavi = edited_ricavi
-
-    if st.button("🔄 Aggiorna e Ricalcola Saldo"):
-        st.rerun()
+    st.write("### 🟢 2. Riepilogo Entrate & Coperture")
+    st.dataframe(st.session_state.piano_ricavi, use_container_width=True, hide_index=True)
 
 # --- 3. DASHBOARD & GRAFICI COLORI ---
 elif menu == "📊 Dashboard & Grafici Colori":
