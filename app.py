@@ -3,62 +3,46 @@ import pandas as pd
 import sqlite3
 import matplotlib.pyplot as plt
 from pathlib import Path
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from io import BytesIO
 import calendar
 import re
-import hashlib
+
 
 # ============================================================
 # CONFIGURAZIONE
 # ============================================================
 
 st.set_page_config(
-    page_title="Gestione Casa & Finanze",
-    page_icon="🏡",
-    layout="centered",
-    initial_sidebar_state="expanded",
+    page_title="Gestione Finanze - Arletti",
+    page_icon="💰",
+    layout="centered"
 )
 
 BASE_DIR = Path(__file__).resolve().parent
-
-EXCEL_FILE = BASE_DIR / "Spese casa -2.xlsx"
 DB_FILE = BASE_DIR / "finanze_famiglia.db"
-
-IMAGE_DIR = BASE_DIR / "renderings_excel"
-IMAGE_DIR.mkdir(exist_ok=True)
-
-
-# ============================================================
-# DATI STATICI
-# ============================================================
+EXCEL_FILE = BASE_DIR / "Spese casa -2.xlsx"
 
 MONTHS = [
-    "Gennaio",
-    "Febbraio",
-    "Marzo",
-    "Aprile",
-    "Maggio",
-    "Giugno",
-    "Luglio",
-    "Agosto",
-    "Settembre",
-    "Ottobre",
-    "Novembre",
-    "Dicembre"
+    "Gennaio", "Febbraio", "Marzo", "Aprile",
+    "Maggio", "Giugno", "Luglio", "Agosto",
+    "Settembre", "Ottobre", "Novembre", "Dicembre"
 ]
 
 EXPENSE_CATEGORIES = [
     "Alimentari",
-    "Tempo libero e viaggi",
+    "Casa",
     "Utenze",
+    "Auto e trasporti",
+    "Figli",
     "Scuola e sport",
-    "Trasporti e auto",
-    "Prelievi contanti",
-    "Casa e assicurazioni",
     "Shopping",
-    "Farmacia e cura della persona",
-    "Arredi e nuova casa",
+    "Salute e cura persona",
+    "Vacanze e viaggi",
+    "Ristoranti",
+    "Tempo libero",
+    "Arredi",
+    "Prelievi contanti",
     "Altro"
 ]
 
@@ -71,104 +55,103 @@ INCOME_CATEGORIES = [
 ]
 
 PEOPLE = [
-    "Famiglia",
-    "Mattia",
-    "Virginia"
-]
-
-ROOM_SHEETS = [
-    "Cucina",
-    "Ripostiglio",
-    "Ingresso",
-    "Armadio ingresso",
-    "Bagno piano terra",
-    "Salotto",
-    "Bagno ammezzato",
-    "Camera matrimoniale",
-    "Camera bimbe",
-    "Bagno piano primo",
-    "Mansarda",
-    "mansarda"
-]
-
-PLAN_SHEETS = [
-    "Planimetrie",
-    "Planimetrie con rendering",
-    "Planimetrie con rendering 1°",
-    "Planimetrie con rendering 2°"
+    "Io",
+    "Partner",
+    "Famiglia"
 ]
 
 
 # ============================================================
-# UTILITÀ
+# STILE
 # ============================================================
 
-def euro(x):
+st.markdown("""
+<style>
 
+.block-container {
+    padding-top: 1rem;
+    padding-bottom: 3rem;
+    max-width: 1100px;
+}
+
+h1 {
+    margin-bottom: 0.2rem;
+}
+
+[data-testid="stMetricValue"] {
+    font-size: 1.45rem;
+}
+
+div[data-testid="stForm"] {
+    border-radius: 12px;
+}
+
+.small-note {
+    font-size: 0.85rem;
+    color: #777;
+}
+
+.big-number {
+    font-size: 2rem;
+    font-weight: 700;
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# ============================================================
+# FUNZIONI GENERALI
+# ============================================================
+
+def euro(value):
     try:
-        x = float(x)
+        value = float(value)
     except Exception:
-        x = 0
+        value = 0
 
     return (
-        f"{x:,.2f} €"
+        f"{value:,.2f} €"
         .replace(",", "X")
         .replace(".", ",")
         .replace("X", ".")
     )
 
 
-def num(x):
-
-    if x is None:
+def num(value):
+    if value is None:
         return None
 
-    try:
-        if pd.isna(x):
-            return None
-    except Exception:
-        pass
+    if isinstance(value, float) and pd.isna(value):
+        return None
 
-    if isinstance(x, (int, float)):
-        return float(x)
+    if isinstance(value, (int, float)):
+        return float(value)
 
-    s = str(x).strip()
-
-    s = (
-        s
-        .replace("€", "")
-        .replace(" ", "")
-    )
+    s = str(value).strip()
+    s = s.replace("€", "").replace(" ", "")
 
     if not s:
         return None
 
     if "," in s:
-        s = (
-            s
-            .replace(".", "")
-            .replace(",", ".")
-        )
+        s = s.replace(".", "").replace(",", ".")
 
     try:
         return float(s)
-
     except Exception:
         return None
 
 
 def month_label(year, month):
-
-    return (
-        f"{MONTHS[month - 1]} {year}"
-    )
+    return f"{MONTHS[month - 1]} {year}"
 
 
-def section_title(
-    title,
-    subtitle=None
-):
+def month_key(year, month):
+    return f"{year}-{month:02d}"
 
+
+def section_title(title, subtitle=None):
     st.title(title)
 
     if subtitle:
@@ -179,2058 +162,548 @@ def section_title(
 # DATABASE
 # ============================================================
 
-def conn():
-
-    return sqlite3.connect(
-        DB_FILE
-    )
+def get_connection():
+    return sqlite3.connect(DB_FILE)
 
 
-def qdf(
-    sql,
-    params=()
-):
-
-    connection = conn()
+def execute(sql, params=()):
+    conn = get_connection()
 
     try:
-
-        return pd.read_sql_query(
-            sql,
-            connection,
-            params=params
-        )
-
-    finally:
-
-        connection.close()
-
-
-def execute(
-    sql,
-    params=()
-):
-
-    connection = conn()
-
-    try:
-
-        cursor = connection.cursor()
-
-        cursor.execute(
-            sql,
-            params
-        )
-
-        connection.commit()
-
+        cursor = conn.cursor()
+        cursor.execute(sql, params)
+        conn.commit()
         return cursor.lastrowid
 
     finally:
+        conn.close()
 
-        connection.close()
+
+def query_df(sql, params=()):
+    conn = get_connection()
+
+    try:
+        return pd.read_sql_query(sql, conn, params=params)
+
+    finally:
+        conn.close()
 
 
-def init_db():
+def init_database():
 
-    connection = conn()
+    conn = get_connection()
+    cursor = conn.cursor()
 
-    connection.executescript(
-        """
-        CREATE TABLE IF NOT EXISTS entrate (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            descrizione TEXT,
-            persona TEXT,
-            categoria TEXT,
-            importo REAL,
-            data TEXT,
-            ricorrente INTEGER DEFAULT 0
-        );
+    cursor.executescript("""
+    
+    CREATE TABLE IF NOT EXISTS movimenti (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        tipo TEXT NOT NULL,
+        data TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        sottocategoria TEXT,
+        descrizione TEXT,
+        persona TEXT,
+        importo REAL NOT NULL,
+        pagato INTEGER DEFAULT 1,
+        fonte TEXT DEFAULT 'manuale',
+        note TEXT
+    );
 
-        CREATE TABLE IF NOT EXISTS spese (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            descrizione TEXT,
-            persona TEXT,
-            categoria TEXT,
-            importo REAL,
-            data TEXT,
-            ricorrente INTEGER DEFAULT 0,
-            note TEXT
-        );
+    CREATE TABLE IF NOT EXISTS spese_mensili (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mese TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        importo REAL NOT NULL,
+        fonte TEXT DEFAULT 'manuale',
+        note TEXT,
+        source_key TEXT UNIQUE
+    );
 
-        CREATE TABLE IF NOT EXISTS ricorrenti (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            descrizione TEXT,
-            categoria TEXT,
-            importo REAL,
-            giorno INTEGER DEFAULT 1,
-            persona TEXT
-        );
+    CREATE TABLE IF NOT EXISTS ricorrenti (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        descrizione TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        importo REAL NOT NULL,
+        giorno INTEGER DEFAULT 1,
+        persona TEXT,
+        attiva INTEGER DEFAULT 1
+    );
 
-        CREATE TABLE IF NOT EXISTS spese_future (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            data TEXT,
-            categoria TEXT,
-            descrizione TEXT,
-            importo REAL,
-            note TEXT
-        );
+    CREATE TABLE IF NOT EXISTS spese_future (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        data TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        descrizione TEXT,
+        persona TEXT,
+        importo REAL NOT NULL,
+        pagata INTEGER DEFAULT 0,
+        note TEXT
+    );
 
-        CREATE TABLE IF NOT EXISTS budget (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            categoria TEXT UNIQUE,
-            importo REAL
-        );
+    CREATE TABLE IF NOT EXISTS budget_mensile (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        mese TEXT NOT NULL,
+        categoria TEXT NOT NULL,
+        importo REAL NOT NULL,
+        UNIQUE(mese, categoria)
+    );
 
-        CREATE TABLE IF NOT EXISTS obiettivi (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            nome TEXT,
-            obiettivo REAL,
-            accumulato REAL DEFAULT 0,
-            scadenza TEXT
-        );
+    CREATE TABLE IF NOT EXISTS obiettivi (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT NOT NULL,
+        obiettivo REAL NOT NULL,
+        accumulato REAL DEFAULT 0,
+        scadenza TEXT,
+        attivo INTEGER DEFAULT 1
+    );
 
-        CREATE TABLE IF NOT EXISTS costi_casa (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            voce TEXT UNIQUE,
-            importo REAL
-        );
+    CREATE TABLE IF NOT EXISTS impostazioni (
+        chiave TEXT PRIMARY KEY,
+        valore TEXT
+    );
 
-        CREATE TABLE IF NOT EXISTS entrate_casa (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            voce TEXT UNIQUE,
-            importo REAL
-        );
+    CREATE TABLE IF NOT EXISTS persone (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE NOT NULL,
+        attiva INTEGER DEFAULT 1
+    );
 
-        CREATE TABLE IF NOT EXISTS impostazioni (
-            chiave TEXT PRIMARY KEY,
-            valore REAL
-        );
-        """
+    CREATE TABLE IF NOT EXISTS categorie (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        nome TEXT UNIQUE NOT NULL,
+        tipo TEXT NOT NULL,
+        attiva INTEGER DEFAULT 1
+    );
+
+    """)
+
+    # Impostazioni iniziali
+    cursor.execute("""
+        INSERT OR IGNORE INTO impostazioni(chiave, valore)
+        VALUES ('risparmio_mensile_target', '0')
+    """)
+
+    cursor.execute("""
+        INSERT OR IGNORE INTO impostazioni(chiave, valore)
+        VALUES ('fondo_sicurezza', '500')
+    """)
+
+    # Persone
+    for person in PEOPLE:
+        cursor.execute(
+            "INSERT OR IGNORE INTO persone(nome) VALUES (?)",
+            (person,)
+        )
+
+    # Categorie spese
+    for category in EXPENSE_CATEGORIES:
+        cursor.execute(
+            "INSERT OR IGNORE INTO categorie(nome, tipo) VALUES (?, 'uscita')",
+            (category,)
+        )
+
+    # Categorie entrate
+    for category in INCOME_CATEGORIES:
+        cursor.execute(
+            "INSERT OR IGNORE INTO categorie(nome, tipo) VALUES (?, 'entrata')",
+            (category,)
+        )
+
+    conn.commit()
+    conn.close()
+
+
+init_database()
+
+
+# ============================================================
+# IMPOSTAZIONI
+# ============================================================
+
+def get_setting(key, default=0):
+    df = query_df(
+        "SELECT valore FROM impostazioni WHERE chiave=?",
+        (key,)
     )
 
-    connection.commit()
-    connection.close()
+    if df.empty:
+        return default
+
+    try:
+        return float(df.iloc[0]["valore"])
+    except Exception:
+        return default
 
 
-init_db()
+def set_setting(key, value):
+    execute("""
+        INSERT INTO impostazioni(chiave, valore)
+        VALUES (?, ?)
+        ON CONFLICT(chiave)
+        DO UPDATE SET valore=excluded.valore
+    """, (key, str(value)))
 
 
 # ============================================================
-# LETTURA EXCEL
+# EXCEL - STORICO
 # ============================================================
 
-def read_excel():
+def parse_excel_family():
 
     if not EXCEL_FILE.exists():
-        return None, None
-
-    import openpyxl
-
-    wb_formula = openpyxl.load_workbook(
-        EXCEL_FILE,
-        data_only=False
-    )
-
-    wb_values = openpyxl.load_workbook(
-        EXCEL_FILE,
-        data_only=True
-    )
-
-    return (
-        wb_formula,
-        wb_values
-    )
-
-
-# ============================================================
-# COSTI FAMIGLIA
-# ============================================================
-
-def parse_family(wb):
-
-    if "Costi famiglia" not in wb.sheetnames:
         return pd.DataFrame()
 
-    ws = wb[
-        "Costi famiglia"
-    ]
+    try:
+        import openpyxl
 
-    rows = []
-
-    year = None
-    month = None
-
-    months = {
-        name.upper(): index
-        for index, name
-        in enumerate(
-            MONTHS,
-            1
-        )
-    }
-
-    for row in range(
-        1,
-        ws.max_row + 1
-    ):
-
-        first = ws.cell(
-            row,
-            1
-        ).value
-
-        if first is None:
-            continue
-
-        text = str(
-            first
-        ).strip()
-
-        upper = text.upper()
-
-        match = re.match(
-            r"SPESE\s+([A-ZÀ-Ù]+)\s+(\d{4})",
-            upper
+        workbook = openpyxl.load_workbook(
+            EXCEL_FILE,
+            data_only=True
         )
 
-        if (
-            match
-            and match.group(1)
-            in months
-        ):
+        if "Costi famiglia" not in workbook.sheetnames:
+            return pd.DataFrame()
 
-            month = months[
-                match.group(1)
-            ]
+        ws = workbook["Costi famiglia"]
 
-            year = int(
-                match.group(2)
-            )
+        rows = []
 
-            continue
+        current_year = None
+        current_month = None
 
-        if (
-            year is None
-            or month is None
-        ):
-            continue
-
-        amount = num(
-            ws.cell(
-                row,
-                2
-            ).value
-        )
-
-        if (
-            amount is None
-            or amount == 0
-            or upper in [
-                "MEDIA",
-                "TOTALE"
-            ]
-        ):
-            continue
-
-        rows.append(
-            {
-                "anno": year,
-                "mese": month,
-                "data": date(
-                    year,
-                    month,
-                    1
-                ),
-                "categoria": text,
-                "importo": amount
-            }
-        )
-
-    return pd.DataFrame(
-        rows
-    )
-
-
-# ============================================================
-# PIANO ACQUISTO NUOVA CASA
-# ============================================================
-
-def parse_house(wb):
-
-    if (
-        "Piano acquisto nuova casa"
-        not in wb.sheetnames
-    ):
-
-        return {
-            "costs": [],
-            "funds": [],
-            "detrazioni": pd.DataFrame(),
-            "scenarios": pd.DataFrame(),
-            "fixed1": pd.DataFrame(),
-            "fixed2": pd.DataFrame()
+        month_map = {
+            month.upper(): index
+            for index, month in enumerate(MONTHS, 1)
         }
 
-    ws = wb[
-        "Piano acquisto nuova casa"
-    ]
+        for row in range(1, ws.max_row + 1):
 
-    costs = []
-    funds = []
-    detrazioni = []
-    scenarios = []
-    fixed1 = []
-    fixed2 = []
+            first_cell = ws.cell(row, 1).value
 
-    # --------------------------------------------------------
-    # COSTI
-    # --------------------------------------------------------
+            if first_cell is None:
+                continue
 
-    for row in range(
-        3,
-        15
-    ):
+            text = str(first_cell).strip()
+            upper_text = text.upper()
 
-        label = ws.cell(
-            row,
-            2
-        ).value
-
-        value = num(
-            ws.cell(
-                row,
-                3
-            ).value
-        )
-
-        if (
-            label
-            and value is not None
-        ):
-
-            costs.append(
-                (
-                    str(label).strip(),
-                    value
-                )
+            # Cerca intestazioni tipo:
+            # SPESE SETTEMBRE 2025
+            match = re.match(
+                r"SPESE\s+([A-ZÀ-Ù]+)\s+(\d{4})",
+                upper_text
             )
 
-    # --------------------------------------------------------
-    # COPERTURE
-    # --------------------------------------------------------
+            if match:
 
-    for row in range(
-        15,
-        18
-    ):
+                month_name = match.group(1)
+                year = int(match.group(2))
 
-        label = ws.cell(
-            row,
-            2
-        ).value
-
-        value = num(
-            ws.cell(
-                row,
-                4
-            ).value
-        )
-
-        if (
-            label
-            and value is not None
-        ):
-
-            funds.append(
-                (
-                    str(label).strip(),
-                    value
-                )
-            )
-
-    # --------------------------------------------------------
-    # DETRAZIONI
-    # --------------------------------------------------------
-
-    for row in range(
-        21,
-        31
-    ):
-
-        year = ws.cell(
-            row,
-            2
-        ).value
-
-        if not year:
-            continue
-
-        try:
-            year = int(year)
-        except Exception:
-            continue
-
-        detrazioni.append(
-            {
-                "Anno":
-                    year,
-
-                "Ristrutturazione vecchio appartamento":
-                    num(
-                        ws.cell(
-                            row,
-                            3
-                        ).value
-                    ) or 0,
-
-                "Bonus nuova casa":
-                    num(
-                        ws.cell(
-                            row,
-                            4
-                        ).value
-                    ) or 0,
-
-                "Bonus mobili":
-                    num(
-                        ws.cell(
-                            row,
-                            5
-                        ).value
-                    ) or 0,
-
-                "Totale detrazioni":
-                    num(
-                        ws.cell(
-                            row,
-                            6
-                        ).value
-                    ) or 0
-            }
-        )
-
-    # --------------------------------------------------------
-    # SCENARI
-    # --------------------------------------------------------
-
-    for row in [
-        34, 35, 36, 37,
-        39, 40, 41,
-        43, 44, 45
-    ]:
-
-        label = ws.cell(
-            row,
-            2
-        ).value
-
-        if not label:
-            continue
-
-        scenarios.append(
-            {
-                "riga":
-                    row,
-
-                "voce":
-                    str(label).strip(),
-
-                "base":
-                    num(
-                        ws.cell(
-                            row,
-                            3
-                        ).value
-                    ),
-
-                "50%":
-                    num(
-                        ws.cell(
-                            row,
-                            4
-                        ).value
-                    ),
-
-                "36%":
-                    num(
-                        ws.cell(
-                            row,
-                            5
-                        ).value
-                    )
-            }
-        )
-
-    # --------------------------------------------------------
-    # SPESE FISSE PERIODO 1
-    # --------------------------------------------------------
-
-    for row in range(
-        51,
-        61
-    ):
-
-        label = ws.cell(
-            row,
-            2
-        ).value
-
-        value_c = num(
-            ws.cell(
-                row,
-                3
-            ).value
-        )
-
-        value_d = num(
-            ws.cell(
-                row,
-                4
-            ).value
-        )
-
-        if (
-            label
-            and value_c is not None
-        ):
-
-            fixed1.append(
-                {
-                    "Voce":
-                        str(label).strip(),
-
-                    "Importo":
-                        value_c,
-
-                    "Tipo":
-                        "Costo"
-                }
-            )
-
-        if (
-            label
-            and value_d is not None
-        ):
-
-            fixed1.append(
-                {
-                    "Voce":
-                        str(label).strip(),
-
-                    "Importo":
-                        value_d,
-
-                    "Tipo":
-                        "Entrata"
-                }
-            )
-
-    # --------------------------------------------------------
-    # SPESE FISSE PERIODO 2
-    # --------------------------------------------------------
-
-    for row in range(
-        66,
-        77
-    ):
-
-        label = ws.cell(
-            row,
-            2
-        ).value
-
-        value_c = num(
-            ws.cell(
-                row,
-                3
-            ).value
-        )
-
-        value_d = num(
-            ws.cell(
-                row,
-                4
-            ).value
-        )
-
-        if (
-            label
-            and value_c is not None
-        ):
-
-            fixed2.append(
-                {
-                    "Voce":
-                        str(label).strip(),
-
-                    "Importo":
-                        value_c,
-
-                    "Tipo":
-                        "Costo"
-                }
-            )
-
-        if (
-            label
-            and value_d is not None
-        ):
-
-            fixed2.append(
-                {
-                    "Voce":
-                        str(label).strip(),
-
-                    "Importo":
-                        value_d,
-
-                    "Tipo":
-                        "Entrata"
-                }
-            )
-
-    return {
-        "costs":
-            costs,
-
-        "funds":
-            funds,
-
-        "detrazioni":
-            pd.DataFrame(
-                detrazioni
-            ),
-
-        "scenarios":
-            pd.DataFrame(
-                scenarios
-            ),
-
-        "fixed1":
-            pd.DataFrame(
-                fixed1
-            ),
-
-        "fixed2":
-            pd.DataFrame(
-                fixed2
-            )
-    }
-
-
-# ============================================================
-# MOBILI
-# ============================================================
-
-def parse_furniture(wb):
-
-    if "Mobili" not in wb.sheetnames:
-        return pd.DataFrame()
-
-    ws = wb[
-        "Mobili"
-    ]
-
-    rows = []
-
-    for row in range(
-        3,
-        ws.max_row + 1
-    ):
-
-        article = ws.cell(
-            row,
-            1
-        ).value
-
-        cost = num(
-            ws.cell(
-                row,
-                2
-            ).value
-        )
-
-        if (
-            article
-            and cost is not None
-        ):
-
-            rows.append(
-                {
-                    "Articolo":
-                        str(article).strip(),
-
-                    "Costo":
-                        cost,
-
-                    "Riferimento":
-                        ws.cell(
-                            row,
-                            3
-                        ).value or "",
-
-                    "Negozio":
-                        ws.cell(
-                            row,
-                            4
-                        ).value or ""
-                }
-            )
-
-    return pd.DataFrame(
-        rows
-            )
-    # ============================================================
-# RENDERING
-# ============================================================
-
-def column_width_pixels(width):
-
-    if width is None:
-        width = 8.43
-
-    return int(
-        width * 7 + 5
-    )
-
-
-def row_height_pixels(height):
-
-    if height is None:
-        height = 15
-
-    return int(
-        height * 96 / 72
-    )
-
-
-def anchor_xy(
-    ws,
-    image
-):
-
-    anchor = getattr(
-        image,
-        "anchor",
-        None
-    )
-
-    if (
-        anchor is None
-        or not hasattr(
-            anchor,
-            "_from"
-        )
-    ):
-
-        return 0, 0
-
-    point = anchor._from
-
-    x = 0
-
-    for col in range(
-        1,
-        point.col + 1
-    ):
-
-        try:
-
-            letter = (
-                ws.cell(
-                    1,
-                    col
-                ).column_letter
-            )
-
-            width = ws.column_dimensions[
-                letter
-            ].width
-
-            x += column_width_pixels(
-                width
-            )
-
-        except Exception:
-
-            x += column_width_pixels(
-                8.43
-            )
-
-    y = 0
-
-    for row in range(
-        1,
-        point.row + 1
-    ):
-
-        y += row_height_pixels(
-            ws.row_dimensions[
-                row
-            ].height
-        )
-
-    x += int(
-        getattr(
-            point,
-            "colOff",
-            0
-        ) / 9525
-    )
-
-    y += int(
-        getattr(
-            point,
-            "rowOff",
-            0
-        ) / 9525
-    )
-
-    return (
-        max(0, x),
-        max(0, y)
-    )
-
-
-def compose_sheet_images(
-    wb,
-    sheet_name
-):
-
-    from PIL import Image
-
-    if sheet_name not in wb.sheetnames:
-        return None, []
-
-    ws = wb[
-        sheet_name
-    ]
-
-    images = getattr(
-        ws,
-        "_images",
-        []
-    )
-
-    if not images:
-        return None, []
-
-    items = []
-
-    min_x = 10**9
-    min_y = 10**9
-    max_x = 0
-    max_y = 0
-
-    for index, image in enumerate(
-        images,
-        1
-    ):
-
-        try:
-
-            data = image._data()
-
-            pil = Image.open(
-                BytesIO(data)
-            ).convert(
-                "RGBA"
-            )
-
-            x, y = anchor_xy(
-                ws,
-                image
-            )
-
-            width = int(
-                getattr(
-                    image,
-                    "width",
-                    pil.width
-                )
-                or pil.width
-            )
-
-            height = int(
-                getattr(
-                    image,
-                    "height",
-                    pil.height
-                )
-                or pil.height
-            )
-
-            pil = pil.resize(
-                (
-                    max(1, width),
-                    max(1, height)
-                )
-            )
-
-            items.append(
-                (
-                    index,
-                    pil,
-                    x,
-                    y
-                )
-            )
-
-            min_x = min(
-                min_x,
-                x
-            )
-
-            min_y = min(
-                min_y,
-                y
-            )
-
-            max_x = max(
-                max_x,
-                x + width
-            )
-
-            max_y = max(
-                max_y,
-                y + height
-            )
-
-        except Exception:
-
-            continue
-
-    if not items:
-        return None, []
-
-    canvas_width = (
-        max_x - min_x
-    )
-
-    canvas_height = (
-        max_y - min_y
-    )
-
-    if (
-        canvas_width <= 0
-        or canvas_height <= 0
-        or canvas_width > 8000
-        or canvas_height > 8000
-    ):
-
-        return None, items
-
-    canvas = Image.new(
-        "RGBA",
-        (
-            canvas_width,
-            canvas_height
-        ),
-        (
-            255,
-            255,
-            255,
-            255
-        )
-    )
-
-    for (
-        index,
-        image,
-        x,
-        y
-    ) in items:
-
-        canvas.alpha_composite(
-            image,
-            (
-                x - min_x,
-                y - min_y
-            )
-        )
-
-    filename = (
-        "composite_"
-        +
-        hashlib.md5(
-            sheet_name.encode()
-        ).hexdigest()[:10]
-        +
-        ".png"
-    )
-
-    output = (
-        IMAGE_DIR
-        /
-        filename
-    )
-
-    canvas.save(
-        output
-    )
-
-    return (
-        str(output),
-        items
-    )
-
-
-def extract_images(
-    wb
-):
-
-    result = {}
-
-    sheets = (
-        ROOM_SHEETS
-        +
-        PLAN_SHEETS
-    )
-
-    for sheet in sheets:
-
-        if sheet not in wb.sheetnames:
-            continue
-
-        composite, items = (
-            compose_sheet_images(
-                wb,
-                sheet
-            )
-        )
-
-        single = []
-
-        ws = wb[
-            sheet
-        ]
-
-        for index, image in enumerate(
-            getattr(
-                ws,
-                "_images",
-                []
-            ),
-            1
-        ):
-
-            try:
-
-                data = image._data()
-
-                extension = (
-                    "jpg"
-                    if data[:3] == b"\xff\xd8\xff"
-                    else "png"
-                )
-
-                filename = (
-                    hashlib.md5(
-                        (
-                            sheet
-                            +
-                            str(index)
-                        ).encode()
-                    ).hexdigest()[:12]
-                    +
-                    "."
-                    +
-                    extension
-                )
-
-                path = (
-                    IMAGE_DIR
-                    /
-                    filename
-                )
-
-                path.write_bytes(
-                    data
-                )
-
-                x, y = anchor_xy(
-                    ws,
-                    image
-                )
-
-                single.append(
-                    {
-                        "path":
-                            str(path),
-
-                        "x":
-                            x,
-
-                        "y":
-                            y,
-
-                        "index":
-                            index
-                    }
-                )
-
-            except Exception:
+                if month_name in month_map:
+                    current_month = month_map[month_name]
+                    current_year = year
 
                 continue
 
-        if (
-            single
-            or composite
-        ):
+            if current_year is None or current_month is None:
+                continue
 
-            result[
-                sheet
-            ] = {
-                "composite":
-                    composite,
+            amount = num(ws.cell(row, 2).value)
 
-                "images":
-                    single
-            }
+            if amount is None:
+                continue
+
+            if amount == 0:
+                continue
+
+            if upper_text in ["MEDIA", "TOTALE"]:
+                continue
+
+            rows.append({
+                "anno": current_year,
+                "mese": current_month,
+                "mese_key": month_key(
+                    current_year,
+                    current_month
+                ),
+                "categoria": text,
+                "importo": amount,
+                "fonte": "Excel"
+            })
+
+        return pd.DataFrame(rows)
+
+    except Exception as error:
+
+        st.warning(
+            f"Errore nella lettura dell'Excel: {error}"
+        )
+
+        return pd.DataFrame()
+
+
+def import_excel_history():
+
+    df = parse_excel_family()
+
+    if df.empty:
+        return 0
+
+    imported = 0
+
+    for _, row in df.iterrows():
+
+        source_key = (
+            f"excel|{row['mese_key']}|"
+            f"{row['categoria']}"
+        )
+
+        execute("""
+            INSERT INTO spese_mensili
+            (
+                mese,
+                categoria,
+                importo,
+                fonte,
+                source_key
+            )
+            VALUES (?, ?, ?, 'Excel', ?)
+
+            ON CONFLICT(source_key)
+            DO UPDATE SET
+                importo=excluded.importo,
+                categoria=excluded.categoria,
+                mese=excluded.mese
+        """, (
+            row["mese_key"],
+            row["categoria"],
+            float(row["importo"]),
+            source_key
+        ))
+
+        imported += 1
+
+    return imported
+
+
+# Import automatico dello storico
+if EXCEL_FILE.exists():
+    import_excel_history()
+
+
+# ============================================================
+# CALCOLI SPESE
+# ============================================================
+
+def monthly_expenses_total(year, month):
+    key = month_key(year, month)
+
+    monthly = query_df("""
+        SELECT COALESCE(SUM(importo),0) AS totale
+        FROM spese_mensili
+        WHERE mese=?
+    """, (key,))
+
+    individual = query_df("""
+        SELECT COALESCE(SUM(importo),0) AS totale
+        FROM movimenti
+        WHERE tipo='uscita'
+        AND substr(data,1,7)=?
+        AND pagato=1
+    """, (key,))
+
+    monthly_total = float(monthly.iloc[0]["totale"])
+    individual_total = float(individual.iloc[0]["totale"])
+
+    return monthly_total + individual_total
+
+
+def monthly_income_total(year, month):
+
+    key = month_key(year, month)
+
+    result = query_df("""
+        SELECT COALESCE(SUM(importo),0) AS totale
+        FROM movimenti
+        WHERE tipo='entrata'
+        AND substr(data,1,7)=?
+        AND pagato=1
+    """, (key,))
+
+    return float(result.iloc[0]["totale"])
+
+
+def monthly_expenses_by_category(year, month):
+
+    key = month_key(year, month)
+
+    monthly = query_df("""
+        SELECT
+            categoria,
+            SUM(importo) AS importo
+        FROM spese_mensili
+        WHERE mese=?
+        GROUP BY categoria
+    """, (key,))
+
+    individual = query_df("""
+        SELECT
+            categoria,
+            SUM(importo) AS importo
+        FROM movimenti
+        WHERE tipo='uscita'
+        AND substr(data,1,7)=?
+        AND pagato=1
+        GROUP BY categoria
+    """, (key,))
+
+    frames = []
+
+    if not monthly.empty:
+        frames.append(monthly)
+
+    if not individual.empty:
+        frames.append(individual)
+
+    if not frames:
+        return pd.DataFrame(
+            columns=["categoria", "importo"]
+        )
+
+    result = pd.concat(frames)
+
+    result = (
+        result
+        .groupby("categoria", as_index=False)["importo"]
+        .sum()
+        .sort_values("importo", ascending=False)
+    )
 
     return result
 
 
 # ============================================================
-# CARICA TUTTO EXCEL
+# RICORRENTI
 # ============================================================
 
-def load_excel():
+def recurring_monthly_total():
 
-    if not EXCEL_FILE.exists():
-        return None
+    df = query_df("""
+        SELECT COALESCE(SUM(importo),0) AS totale
+        FROM ricorrenti
+        WHERE attiva=1
+    """)
 
-    wb_formula, wb_values = (
-        read_excel()
-    )
-
-    return {
-        "house":
-            parse_house(
-                wb_values
-            ),
-
-        "family":
-            parse_family(
-                wb_values
-            ),
-
-        "furniture":
-            parse_furniture(
-                wb_values
-            ),
-
-        "images":
-            extract_images(
-                wb_formula
-            ),
-
-        "sheets":
-            wb_formula.sheetnames
-    }
+    return float(df.iloc[0]["totale"])
 
 
-excel = load_excel()
+def recurring_remaining_today():
 
+    today = date.today()
 
-# ============================================================
-# LOGICA GARAGE
-# ============================================================
-
-def is_garage_label(
-    label
-):
-
-    text = str(
-        label
-    ).lower()
-
-    return (
-        "garage" in text
-        or
-        "autorimessa" in text
-    )
-
-
-def house_costs_df(
-    include_garage=False
-):
-
-    if not excel:
-
-        return pd.DataFrame(
-            columns=[
-                "Voce",
-                "Importo"
-            ]
-        )
-
-    df = pd.DataFrame(
-        excel["house"]["costs"],
-        columns=[
-            "Voce",
-            "Importo"
-        ]
-    )
-
-    if not include_garage:
-
-        df = df[
-            ~df["Voce"].apply(
-                is_garage_label
-            )
-        ].copy()
-
-    return df
-
-
-def garage_amount():
-
-    if not excel:
-        return 0.0
-
-    for label, value in (
-        excel["house"]["costs"]
-    ):
-
-        if is_garage_label(
-            label
-        ):
-
-            return float(
-                value
-            )
-
-    return 0.0
-
-
-def garage_monthly_amount():
-
-    return (
-        garage_amount()
-        /
-        60.0
-    )
-
-
-def house_initial_costs_total():
-
-    df = house_costs_df(
-        include_garage=False
-    )
+    df = query_df("""
+        SELECT *
+        FROM ricorrenti
+        WHERE attiva=1
+    """)
 
     if df.empty:
-        return 0.0
+        return 0
 
-    return float(
-        df["Importo"].sum()
-    )
+    total = 0
 
+    for _, row in df.iterrows():
 
-def house_total_coverage():
+        try:
+            day = int(row["giorno"])
+        except Exception:
+            day = 1
 
-    if not excel:
-        return 0.0
+        # Se il pagamento ricorrente è previsto oggi o nei prossimi giorni
+        # viene considerato ancora da sostenere.
+        if day >= today.day:
+            total += float(row["importo"])
 
-    return float(
-        sum(
-            value
-            for _, value
-            in excel["house"]["funds"]
-        )
-    )
+    return total
 
 
 # ============================================================
-# SEED DATI CASA
+# SPESE FUTURE
 # ============================================================
 
-def seed_house_from_excel():
+def future_expenses_remaining(year, month):
 
-    if not excel:
-        return
+    today = date.today()
 
-    count_costs = qdf(
-        """
-        SELECT COUNT(*) AS n
-        FROM costi_casa
-        """
-    ).iloc[0, 0]
+    start = date(year, month, 1)
 
-    if count_costs == 0:
+    last_day = calendar.monthrange(year, month)[1]
+    end = date(year, month, last_day)
 
-        for label, value in (
-            excel["house"]["costs"]
-        ):
-
-            execute(
-                """
-                INSERT OR IGNORE INTO costi_casa
-                (voce, importo)
-                VALUES (?, ?)
-                """,
-                (
-                    label,
-                    value
-                )
-            )
-
-    count_funds = qdf(
-        """
-        SELECT COUNT(*) AS n
-        FROM entrate_casa
-        """
-    ).iloc[0, 0]
-
-    if count_funds == 0:
-
-        for label, value in (
-            excel["house"]["funds"]
-        ):
-
-            execute(
-                """
-                INSERT OR IGNORE INTO entrate_casa
-                (voce, importo)
-                VALUES (?, ?)
-                """,
-                (
-                    label,
-                    value
-                )
-            )
-
-
-seed_house_from_excel()
-
-
-# ============================================================
-# FINANZE MENSILI
-# ============================================================
-
-def month_total_excel(
-    year,
-    month
-):
-
-    if (
-        not excel
-        or excel["family"].empty
-    ):
-
-        return 0.0
-
-    df = excel[
-        "family"
-    ]
-
-    return float(
-        df.loc[
-            (
-                df["anno"] == year
-            )
-            &
-            (
-                df["mese"] == month
-            ),
-            "importo"
-        ].sum()
-    )
-
-
-def month_total_app(
-    year,
-    month
-):
-
-    result = qdf(
-        """
-        SELECT
-            COALESCE(
-                SUM(importo),
-                0
-            ) AS totale
-
-        FROM spese
-
-        WHERE strftime(
-            '%Y',
-            data
-        ) = ?
-
-        AND strftime(
-            '%m',
-            data
-        ) = ?
-        """,
-        (
-            str(year),
-            f"{month:02d}"
-        )
-    )
-
-    return float(
-        result.iloc[0, 0]
-    )
-
-
-def month_income_app(
-    year,
-    month
-):
-
-    result = qdf(
-        """
-        SELECT
-            COALESCE(
-                SUM(importo),
-                0
-            ) AS totale
-
-        FROM entrate
-
-        WHERE strftime(
-            '%Y',
-            data
-        ) = ?
-
-        AND strftime(
-            '%m',
-            data
-        ) = ?
-        """,
-        (
-            str(year),
-            f"{month:02d}"
-        )
-    )
-
-    return float(
-        result.iloc[0, 0]
-    )
-
-
-# ============================================================
-# MEDIA STORICA PER CATEGORIA
-# ============================================================
-
-def historical_average_by_category(
-    months_window=12
-):
-
-    if (
-        not excel
-        or excel["family"].empty
-    ):
-
-        return pd.DataFrame(
-            columns=[
-                "Categoria",
-                "Media mensile"
-            ]
-        )
-
-    df = excel[
-        "family"
-    ].copy()
-
-    periods = (
-        df[
-            [
-                "anno",
-                "mese"
-            ]
-        ]
-        .drop_duplicates()
-        .sort_values(
-            [
-                "anno",
-                "mese"
-            ]
-        )
-    )
-
-    if len(periods) > months_window:
-
-        periods = periods.tail(
-            months_window
-        )
-
-    df = df.merge(
-        periods,
-        on=[
-            "anno",
-            "mese"
-        ],
-        how="inner"
-    )
-
-    number_of_months = max(
-        1,
-        len(periods)
-    )
-
-    result = (
-        df
-        .groupby(
-            "categoria",
-            as_index=False
-        )["importo"]
-        .sum()
-    )
-
-    result["Media mensile"] = (
-        result["importo"]
-        /
-        number_of_months
-    )
-
-    result = (
-        result
-        .rename(
-            columns={
-                "categoria":
-                    "Categoria"
-            }
-        )
-        [
-            [
-                "Categoria",
-                "Media mensile"
-            ]
-        ]
-    )
-
-    return result.sort_values(
-        "Media mensile",
-        ascending=False
-    )
-
-
-# ============================================================
-# BUDGET GUIDA
-# ============================================================
-
-def savings_guideline_table(
-    months_window,
-    target_savings_pct,
-    income_monthly
-):
-
-    history = (
-        historical_average_by_category(
-            months_window
-        )
-    )
-
-    if history.empty:
-        return history
-
-    total_history = (
-        history[
-            "Media mensile"
-        ].sum()
-    )
-
-    target_saving = (
-        income_monthly
-        *
-        target_savings_pct
-        /
-        100
-    )
-
-    available = max(
-        0,
-        income_monthly
-        -
-        target_saving
-    )
-
-    if (
-        income_monthly <= 0
-        or total_history <= 0
-    ):
-
-        history[
-            "Budget guida"
-        ] = history[
-            "Media mensile"
-        ]
-
-        history[
-            "Riduzione"
-        ] = 0.0
-
-        return history
-
-    scale = (
-        available
-        /
-        total_history
-    )
-
-    history[
-        "Budget guida"
-    ] = (
-        history[
-            "Media mensile"
-        ]
-        *
-        scale
-    )
-
-    history[
-        "Riduzione"
-    ] = (
-        1 - scale
-    ).clip(
-        lower=0
-    )
-
-    return history
-
-
-# ============================================================
-# SPESE RICORRENTI
-# ============================================================
-
-def app_recurring_monthly_total():
-
-    df = qdf(
-        """
-        SELECT
-            COALESCE(
-                SUM(importo),
-                0
-            ) AS totale
-        FROM ricorrenti
-        """
-    )
-
-    return float(
-        df.iloc[0, 0]
-    )
-
-
-def app_future_month_total(
-    year,
-    month
-):
-
-    df = qdf(
-        """
-        SELECT
-            COALESCE(
-                SUM(importo),
-                0
-            ) AS totale
-
+    df = query_df("""
+        SELECT *
         FROM spese_future
+        WHERE pagata=0
+        AND data>=?
+        AND data<=?
+    """, (
+        max(today, start).isoformat(),
+        end.isoformat()
+    ))
 
-        WHERE strftime(
-            '%Y',
-            data
-        ) = ?
+    if df.empty:
+        return 0
 
-        AND strftime(
-            '%m',
-            data
-        ) = ?
-        """,
-        (
-            str(year),
-            f"{month:02d}"
-        )
-    )
-
-    return float(
-        df.iloc[0, 0]
-    )# ============================================================
-# COSTO MENSILE NUOVA CASA
-# ============================================================
-
-def find_monthly_mortgage():
-
-    if not excel:
-        return 0.0
-
-    house = excel[
-        "house"
-    ]
-
-    mortgage = 0.0
-
-    for fixed in [
-        house["fixed1"],
-        house["fixed2"]
-    ]:
-
-        if fixed.empty:
-            continue
-
-        for _, row in fixed.iterrows():
-
-            voce = str(
-                row["Voce"]
-            ).lower()
-
-            tipo = str(
-                row["Tipo"]
-            )
-
-            if (
-                "mutuo" in voce
-                and tipo == "Costo"
-            ):
-
-                mortgage = max(
-                    mortgage,
-                    float(
-                        row["Importo"]
-                    )
-                )
-
-    return mortgage
-
-
-def new_house_monthly_cost(
-    period="Primi 5 anni"
-):
-
-    if not excel:
-
-        return (
-            0.0,
-            0.0,
-            0.0,
-            0.0
-        )
-
-    house = excel[
-        "house"
-    ]
-
-    mortgage = (
-        find_monthly_mortgage()
-    )
-
-    # --------------------------------------------------------
-    # GARAGE:
-    #
-    # NON entra nel costo iniziale.
-    # Viene pagato in 60 mesi.
-    # --------------------------------------------------------
-
-    if period == "Primi 5 anni":
-
-        garage = (
-            garage_monthly_amount()
-        )
-
-    else:
-
-        garage = 0.0
-
-    # --------------------------------------------------------
-    # DETRAZIONI
-    # --------------------------------------------------------
-
-    detrazioni = house[
-        "detrazioni"
-    ]
-
-    if detrazioni.empty:
-
-        credit = 0.0
-
-    elif period == "Primi 5 anni":
-
-        credit = (
-            detrazioni
-            .head(5)
-            [
-                "Totale detrazioni"
-            ]
-            .mean()
-            /
-            12
-        )
-
-    elif period == "6° anno":
-
-        if len(detrazioni) > 5:
-
-            credit = (
-                detrazioni.iloc[5]
-                [
-                    "Totale detrazioni"
-                ]
-                /
-                12
-            )
-
-        else:
-
-            credit = 0.0
-
-    else:
-
-        if len(detrazioni) >= 4:
-
-            credit = (
-                detrazioni.tail(4)
-                [
-                    "Totale detrazioni"
-                ]
-                .mean()
-                /
-                12
-            )
-
-        else:
-
-            credit = (
-                detrazioni[
-                    "Totale detrazioni"
-                ]
-                .mean()
-                /
-                12
-            )
-
-    gross = (
-        mortgage
-        +
-        garage
-    )
-
-    net = max(
-        0,
-        gross - credit
-    )
-
-    return (
-        net,
-        mortgage,
-        garage,
-        credit
-    )
+    return float(df["importo"].sum())
 
 
 # ============================================================
-# QUANTO POSSO SPENDERE OGGI
+# BUDGET
 # ============================================================
 
-def daily_spending_plan(
-    target_saving_pct,
-    expected_income,
-    selected_date,
-    include_house=True,
-    include_recurring=True,
-    include_future=True,
-    safety_buffer=0.0,
-    house_period="Primi 5 anni"
-):
+def get_budget(month_key_value):
 
-    year = (
-        selected_date.year
-    )
-
-    month = (
-        selected_date.month
-    )
-
-    days_in_month = (
-        calendar.monthrange(
-            year,
-            month
-        )[1]
-    )
-
-    days_remaining = max(
-        1,
-        days_in_month
-        -
-        selected_date.day
-        +
-        1
-    )
-
-    # --------------------------------------------------------
-    # SPESE GIÀ SOSTENUTE
-    # --------------------------------------------------------
-
-    actual_spent = (
-        month_total_excel(
-            year,
-            month
-        )
-        +
-        month_total_app(
-            year,
-            month
-        )
-    )
-
-    # --------------------------------------------------------
-    # RISPARMIO
-    # --------------------------------------------------------
-
-    savings_target = max(
-        0,
-        expected_income
-        *
-        target_saving_pct
-        /
-        100
-    )
-
-    # --------------------------------------------------------
-    # RICORRENTI
-    # --------------------------------------------------------
-
-    recurring = (
-        app_recurring_monthly_total()
-        if include_recurring
-        else 0
-    )
-
-    # --------------------------------------------------------
-    # SPESE FUTURE
-    # --------------------------------------------------------
-
-    future = (
-        app_future_month_total(
-            year,
-            month
-        )
-        if include_future
-        else 0
-    )
-
-    # --------------------------------------------------------
-    # NUOVA CASA
-    # --------------------------------------------------------
-
-    house_cost = (
-        new_house_monthly_cost(
-            house_period
-        )[0]
-        if include_house
-        else 0
-    )
-
-    # --------------------------------------------------------
-    # BUDGET RESIDUO
-    # --------------------------------------------------------
-
-    remaining = (
-        expected_income
-        -
-        actual_spent
-        -
-        recurring
-        -
-        future
-        -
-        house_cost
-        -
-        savings_target
-        -
-        safety_buffer
-    )
-
-    daily = (
-        max(
-            0,
-            remaining
-        )
-        /
-        days_remaining
-    )
-
-    return {
-        "income":
-            expected_income,
-
-        "actual_spent":
-            actual_spent,
-
-        "recurring":
-            recurring,
-
-        "future":
-            future,
-
-        "house":
-            house_cost,
-
-        "saving":
-            savings_target,
-
-        "buffer":
-            safety_buffer,
-
-        "remaining":
-            remaining,
-
-        "daily":
-            daily,
-
-        "days_remaining":
-            days_remaining
-    }
+    return query_df("""
+        SELECT categoria, importo
+        FROM budget_mensile
+        WHERE mese=?
+        ORDER BY categoria
+    """, (month_key_value,))
 
 
 # ============================================================
-# MENU
+# SIDEBAR
 # ============================================================
 
-st.sidebar.title(
-    "🏡 Gestione Casa"
-)
+st.sidebar.title("💰 Gestione Finanze")
 
 menu = st.sidebar.radio(
     "SEZIONI",
     [
         "🏠 Home",
-        "📜 Storico famiglia",
-        "🏡 Nuova Casa",
-        "🪑 Mobili",
-        "🖼️ Rendering",
         "💰 Entrate",
-        "💸 Spese",
-        "🔁 Ricorrenti",
+        "💳 Spese",
+        "🔁 Spese ricorrenti",
         "📅 Budget",
         "🎯 Obiettivi",
-        "💳 Quanto posso spendere oggi?",
+        "💸 Quanto posso spendere oggi?",
         "📊 Analisi",
-        "📥 Import/Export"
+        "⚙️ Impostazioni",
+        "📥 Import / Export"
     ]
 )
 
 st.sidebar.markdown("---")
 
 if EXCEL_FILE.exists():
-
-    st.sidebar.success(
-        "🟢 Excel collegato"
-    )
-
-    st.sidebar.caption(
-        "Spese casa -2.xlsx"
-    )
-
+    st.sidebar.success("🟢 Excel collegato")
+    st.sidebar.caption("Spese casa -2.xlsx")
 else:
-
-    st.sidebar.error(
-        "🔴 Excel non trovato"
+    st.sidebar.warning(
+        "🟡 Excel non trovato"
     )
-
     st.sidebar.caption(
-        "Metti il file nella stessa cartella di app.py"
+        "Lo storico Excel non sarà disponibile."
     )
 
 
@@ -2241,985 +714,188 @@ else:
 if menu == "🏠 Home":
 
     section_title(
-        "🏡 Dashboard Casa & Finanze",
-        "Storico e progetto casa dal tuo Excel + "
-        "nuovi dati inseriti nell'app"
+        "🏠 Dashboard Finanze",
+        "Controllo semplice delle entrate, delle spese e del risparmio familiare"
     )
 
-    mese = st.date_input(
+    selected_month = st.date_input(
         "📅 Mese",
-        date.today().replace(
-            day=1
-        )
+        date.today().replace(day=1)
     )
 
-    year = mese.year
-    month = mese.month
+    year = selected_month.year
+    month = selected_month.month
+    key = month_key(year, month)
 
-    # --------------------------------------------------------
-    # SPESE
-    # --------------------------------------------------------
+    income = monthly_income_total(year, month)
+    expenses = monthly_expenses_total(year, month)
+    savings = income - expenses
 
-    spese = (
-        month_total_excel(
-            year,
-            month
-        )
-        +
-        month_total_app(
-            year,
-            month
-        )
-    )
-
-    # --------------------------------------------------------
-    # ENTRATE
-    # --------------------------------------------------------
-
-    entrate = (
-        month_income_app(
-            year,
-            month
-        )
-    )
-
-    risparmio = (
-        entrate
-        -
-        spese
-    )
-
-    percentuale = (
-        risparmio
-        /
-        entrate
-        *
-        100
-        if entrate
+    savings_pct = (
+        savings / income * 100
+        if income > 0
         else 0
     )
 
-    # --------------------------------------------------------
-    # METRICHE
-    # --------------------------------------------------------
-
-    c1, c2, c3, c4 = (
-        st.columns(4)
-    )
+    c1, c2, c3, c4 = st.columns(4)
 
     c1.metric(
-        "💰 Entrate app",
-        euro(entrate)
+        "💰 Entrate",
+        euro(income)
     )
 
     c2.metric(
-        "💸 Spese",
-        euro(spese)
+        "💳 Spese",
+        euro(expenses)
     )
 
     c3.metric(
         "💚 Risparmio",
-        euro(risparmio)
+        euro(savings)
     )
 
     c4.metric(
         "📈 Risparmio %",
-        f"{percentuale:.1f}%"
+        f"{savings_pct:.1f}%"
     )
-
-    # --------------------------------------------------------
-    # NUOVA CASA
-    # --------------------------------------------------------
-
-    if excel:
-
-        st.markdown("---")
-
-        st.subheader(
-            "🏡 Situazione nuova casa"
-        )
-
-        initial = (
-            house_initial_costs_total()
-        )
-
-        coverage = (
-            house_total_coverage()
-        )
-
-        garage = (
-            garage_amount()
-        )
-
-        garage_month = (
-            garage_monthly_amount()
-        )
-
-        det = excel[
-            "house"
-        ][
-            "detrazioni"
-        ]
-
-        total_det = (
-            det[
-                "Totale detrazioni"
-            ].sum()
-            if not det.empty
-            else 0
-        )
-
-        a, b, c, d = (
-            st.columns(4)
-        )
-
-        a.metric(
-            "Costi iniziali",
-            euro(initial),
-            help=(
-                "Esclude il garage: "
-                "il garage viene pagato "
-                "in 60 mesi."
-            )
-        )
-
-        b.metric(
-            "Coperture",
-            euro(coverage)
-        )
-
-        c.metric(
-            "Residuo iniziale",
-            euro(
-                coverage
-                -
-                initial
-            )
-        )
-
-        d.metric(
-            "Detrazioni totali",
-            euro(total_det)
-        )
-
-        st.info(
-            f"🚗 Garage: {euro(garage)} "
-            f"distribuiti in 60 mesi = "
-            f"**{euro(garage_month)}/mese**. "
-            "La quota garage non viene "
-            "sottratta dalla liquidità iniziale."
-        )
-
-    # --------------------------------------------------------
-    # BUDGET RISPARMIO
-    # --------------------------------------------------------
 
     st.markdown("---")
 
-    st.subheader(
-        "🎯 Budget per risparmiare"
-    )
+    # --------------------------------------------------------
+    # SITUAZIONE BUDGET
+    # --------------------------------------------------------
 
-    st.caption(
-        "La guida parte dalle tue spese "
-        "storiche reali e permette di "
-        "scegliere un obiettivo di risparmio."
-    )
+    st.subheader("📅 Situazione del mese")
 
-    target = st.slider(
-        "Obiettivo minimo di risparmio",
-        0,
-        30,
-        15,
-        1,
-        format="%d%%"
-    )
+    budget_df = get_budget(key)
 
-    if (
-        not excel
-        or excel["family"].empty
-    ):
+    if budget_df.empty:
 
         st.info(
-            "Non ci sono dati storici."
-        )
-
-    elif entrate <= 0:
-
-        st.info(
-            "Inserisci almeno un'entrata "
-            "mensile nella sezione Entrate."
+            "Non hai ancora impostato un budget per questo mese."
         )
 
     else:
 
-        target_amount = (
-            entrate
-            *
-            target
-            /
-            100
+        spent_df = monthly_expenses_by_category(
+            year,
+            month
         )
 
-        available = max(
-            0,
-            entrate
-            -
-            target_amount
-        )
+        rows = []
 
-        c1, c2 = st.columns(2)
+        for _, budget_row in budget_df.iterrows():
 
-        c1.metric(
-            "Risparmio obiettivo",
-            euro(target_amount)
-        )
+            category = budget_row["categoria"]
+            budget = float(budget_row["importo"])
 
-        c2.metric(
-            "Budget massimo spese",
-            euro(available)
-        )
+            spent = 0
 
-        guide = (
-            savings_guideline_table(
-                12,
-                target,
-                entrate
-            )
-        )
+            if not spent_df.empty:
+
+                match = spent_df[
+                    spent_df["categoria"] == category
+                ]
+
+                if not match.empty:
+                    spent = float(
+                        match.iloc[0]["importo"]
+                    )
+
+            rows.append({
+                "Categoria": category,
+                "Budget": budget,
+                "Speso": spent,
+                "Residuo": budget - spent
+            })
+
+        budget_view = pd.DataFrame(rows)
 
         st.dataframe(
-            guide,
+            budget_view.style.format({
+                "Budget": lambda x: euro(x),
+                "Speso": lambda x: euro(x),
+                "Residuo": lambda x: euro(x)
+            }),
             use_container_width=True,
             hide_index=True
         )
 
+    # --------------------------------------------------------
+    # ULTIMI MESI
+    # --------------------------------------------------------
 
-# ============================================================
-# STORICO FAMIGLIA
-# ============================================================
+    st.markdown("---")
+    st.subheader("📈 Andamento spese")
 
-elif menu == "📜 Storico famiglia":
+    history = query_df("""
+        SELECT
+            mese,
+            SUM(importo) AS importo
+        FROM spese_mensili
+        GROUP BY mese
+        ORDER BY mese
+    """)
 
-    section_title(
-        "📜 Storico spese",
-        "Dati letti direttamente dal foglio "
-        "'Costi famiglia'"
-    )
+    individual_history = query_df("""
+        SELECT
+            substr(data,1,7) AS mese,
+            SUM(importo) AS importo
+        FROM movimenti
+        WHERE tipo='uscita'
+        AND pagato=1
+        GROUP BY substr(data,1,7)
+        ORDER BY mese
+    """)
 
-    if (
-        not excel
-        or excel["family"].empty
-    ):
+    frames = []
 
-        st.error(
-            "Nessun dato storico trovato."
+    if not history.empty:
+        frames.append(history)
+
+    if not individual_history.empty:
+        frames.append(individual_history)
+
+    if frames:
+
+        chart_df = pd.concat(frames)
+
+        chart_df = (
+            chart_df
+            .groupby("mese", as_index=False)["importo"]
+            .sum()
+            .sort_values("mese")
+            .tail(12)
         )
 
-    else:
-
-        df = excel[
-            "family"
-        ]
-
-        years = sorted(
-            df["anno"].unique(),
-            reverse=True
+        chart_df["label"] = chart_df["mese"].apply(
+            lambda x: MONTHS[int(x[5:7]) - 1][:3]
+            + " "
+            + x[:4]
         )
 
-        year = st.selectbox(
-            "Anno",
-            years
+        fig, ax = plt.subplots(
+            figsize=(10, 4)
         )
 
-        months = sorted(
-            df.loc[
-                df["anno"] == year,
-                "mese"
-            ].unique(),
-            reverse=True
+        ax.plot(
+            chart_df["label"],
+            chart_df["importo"],
+            marker="o"
         )
 
-        month = st.selectbox(
-            "Mese",
-            months,
-            format_func=lambda x:
-                month_label(
-                    year,
-                    x
-                )
+        ax.set_ylabel("€")
+        ax.tick_params(
+            axis="x",
+            rotation=45
         )
 
-        data = df[
-            (
-                df["anno"] == year
-            )
-            &
-            (
-                df["mese"] == month
-            )
-        ].copy()
+        ax.grid(alpha=0.2)
 
-        total = (
-            data["importo"].sum()
+        st.pyplot(
+            fig,
+            clear_figure=True
         )
-
-        st.metric(
-            "Totale",
-            euro(total)
-        )
-
-        c1, c2 = (
-            st.columns(2)
-        )
-
-        with c1:
-
-            fig, ax = plt.subplots(
-                figsize=(6, 5)
-            )
-
-            ax.pie(
-                data["importo"],
-                labels=data["categoria"],
-                autopct="%1.1f%%",
-                startangle=90
-            )
-
-            ax.axis(
-                "equal"
-            )
-
-            st.pyplot(
-                fig,
-                clear_figure=True
-            )
-
-        with c2:
-
-            st.dataframe(
-                data[
-                    [
-                        "categoria",
-                        "importo"
-                    ]
-                ].rename(
-                    columns={
-                        "categoria":
-                            "Categoria",
-
-                        "importo":
-                            "Importo"
-                    }
-                ),
-                use_container_width=True,
-                hide_index=True
-            )
-
-
-# ============================================================
-# NUOVA CASA
-# ============================================================
-
-elif menu == "🏡 Nuova Casa":
-
-    section_title(
-        "🏡 Nuova Casa",
-        "Costi, coperture, detrazioni "
-        "e scenari importati dal tuo Excel"
-    )
-
-    if not excel:
-
-        st.error(
-            "File Excel non trovato."
-        )
-
-    else:
-
-        house = excel[
-            "house"
-        ]
-
-        costs_all = pd.DataFrame(
-            house["costs"],
-            columns=[
-                "Voce",
-                "Importo"
-            ]
-        )
-
-        costs_initial = (
-            house_costs_df(
-                False
-            )
-        )
-
-        funds = pd.DataFrame(
-            house["funds"],
-            columns=[
-                "Voce",
-                "Importo"
-            ]
-        )
-
-        garage = (
-            garage_amount()
-        )
-
-        garage_month = (
-            garage_monthly_amount()
-        )
-
-        tabs = st.tabs(
-            [
-                "💰 Bilancio",
-                "🚗 Garage",
-                "🧾 Detrazioni",
-                "📊 Scenari",
-                "📋 Spese fisse"
-            ]
-        )
-
-        # ====================================================
-        # BILANCIO
-        # ====================================================
-
-        with tabs[0]:
-
-            initial = (
-                costs_initial[
-                    "Importo"
-                ].sum()
-                if not costs_initial.empty
-                else 0
-            )
-
-            coverage = (
-                funds[
-                    "Importo"
-                ].sum()
-                if not funds.empty
-                else 0
-            )
-
-            st.subheader(
-                "Esborso iniziale"
-            )
-
-            a, b, c = (
-                st.columns(3)
-            )
-
-            a.metric(
-                "Costi iniziali",
-                euro(initial)
-            )
-
-            b.metric(
-                "Coperture",
-                euro(coverage)
-            )
-
-            c.metric(
-                "Liquidità iniziale residua",
-                euro(
-                    coverage
-                    -
-                    initial
-                )
-            )
-
-            st.info(
-                f"Il garage da {euro(garage)} "
-                "è escluso da questo conteggio "
-                "perché viene pagato in 60 mesi."
-            )
-
-            st.subheader(
-                "Costi iniziali"
-            )
-
-            st.dataframe(
-                costs_initial,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.subheader(
-                "Voce esclusa dal rogito"
-            )
-
-            garage_df = costs_all[
-                costs_all["Voce"].apply(
-                    is_garage_label
-                )
-            ]
-
-            st.dataframe(
-                garage_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.subheader(
-                "Coperture"
-            )
-
-            st.dataframe(
-                funds,
-                use_container_width=True,
-                hide_index=True
-            )
-
-        # ====================================================
-        # GARAGE
-        # ====================================================
-
-        with tabs[1]:
-
-            st.subheader(
-                "🚗 Pagamento garage"
-            )
-
-            a, b, c = (
-                st.columns(3)
-            )
-
-            a.metric(
-                "Totale garage",
-                euro(garage)
-            )
-
-            b.metric(
-                "Durata",
-                "60 mesi"
-            )
-
-            c.metric(
-                "Quota mensile",
-                euro(garage_month)
-            )
-
-            st.progress(
-                1 / 5
-            )
-
-            st.caption(
-                "La quota mensile viene considerata "
-                "nel costo della nuova casa nei "
-                "primi 5 anni, non nell'esborso iniziale."
-            )
-
-            st.markdown(
-                f"**Calcolo:** "
-                f"{euro(garage)} ÷ 60 = "
-                f"**{euro(garage_month)}/mese**"
-            )
-
-        # ====================================================
-        # DETRAZIONI
-        # ====================================================
-
-        with tabs[2]:
-
-            det = house[
-                "detrazioni"
-            ]
-
-            if det.empty:
-
-                st.warning(
-                    "Nessuna tabella detrazioni trovata."
-                )
-
-            else:
-
-                st.dataframe(
-                    det,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                st.metric(
-                    "Totale recuperi fiscali",
-                    euro(
-                        det[
-                            "Totale detrazioni"
-                        ].sum()
-                    )
-                )
-
-                fig, ax = plt.subplots(
-                    figsize=(10, 4)
-                )
-
-                ax.bar(
-                    det["Anno"].astype(
-                        str
-                    ),
-                    det[
-                        "Totale detrazioni"
-                    ]
-                )
-
-                ax.set_ylabel(
-                    "€"
-                )
-
-                ax.set_title(
-                    "Detrazioni annuali"
-                )
-
-                st.pyplot(
-                    fig,
-                    clear_figure=True
-                )
-
-        # ====================================================
-        # SCENARI
-        # ====================================================
-
-        with tabs[3]:
-
-            scen = house[
-                "scenarios"
-            ]
-
-            st.dataframe(
-                scen,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.subheader(
-                "Scenario mensile corretto"
-            )
-
-            if not house[
-                "detrazioni"
-            ].empty:
-
-                avg_det = (
-                    house[
-                        "detrazioni"
-                    ]
-                    .head(5)
-                    [
-                        "Totale detrazioni"
-                    ]
-                    .mean()
-                    /
-                    12
-                )
-
-            else:
-
-                avg_det = 0
-
-            loan = (
-                find_monthly_mortgage()
-            )
-
-            if loan > 0:
-
-                det6 = 0
-
-                if len(
-                    house["detrazioni"]
-                ) > 5:
-
-                    det6 = (
-                        house[
-                            "detrazioni"
-                        ]
-                        .iloc[5]
-                        [
-                            "Totale detrazioni"
-                        ]
-                        /
-                        12
-                    )
-
-                corrected = pd.DataFrame(
-                    [
-                        {
-                            "Periodo":
-                                "Primi 5 anni",
-
-                            "Mutuo":
-                                loan,
-
-                            "Garage":
-                                garage_month,
-
-                            "Detrazione media":
-                                avg_det,
-
-                            "Costo netto":
-                                loan
-                                +
-                                garage_month
-                                -
-                                avg_det
-                        },
-
-                        {
-                            "Periodo":
-                                "6° anno",
-
-                            "Mutuo":
-                                loan,
-
-                            "Garage":
-                                0,
-
-                            "Detrazione media":
-                                det6,
-
-                            "Costo netto":
-                                loan
-                                -
-                                det6
-                        }
-                    ]
-                )
-
-                st.dataframe(
-                    corrected,
-                    use_container_width=True,
-                    hide_index=True
-                )
-
-                st.info(
-                    "Il garage viene aggiunto "
-                    "al costo mensile soltanto "
-                    "nei primi 60 mesi."
-                )
-
-        # ====================================================
-        # SPESE FISSE
-        # ====================================================
-
-        with tabs[4]:
-
-            st.subheader(
-                "Periodo 1"
-            )
-
-            st.dataframe(
-                house["fixed1"],
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.subheader(
-                "Periodo 2"
-            )
-
-            st.dataframe(
-                house["fixed2"],
-                use_container_width=True,
-                hide_index=True
-            )
-            # ============================================================
-# MOBILI
-# ============================================================
-
-elif menu == "🪑 Mobili":
-
-    section_title(
-        "🪑 Mobili",
-        "Lista importata dal foglio 'Mobili'"
-    )
-
-    if (
-        not excel
-        or excel["furniture"].empty
-    ):
-
-        st.error(
-            "Nessun mobile trovato."
-        )
-
-    else:
-
-        furniture = excel[
-            "furniture"
-        ]
-
-        budget = st.number_input(
-            "Budget mobili (€)",
-            min_value=0.0,
-            value=15000.0,
-            step=500.0
-        )
-
-        total = furniture[
-            "Costo"
-        ].sum()
-
-        residual = (
-            budget -
-            total
-        )
-
-        percentage = (
-            total / budget
-            if budget > 0
-            else 0
-        )
-
-        c1, c2, c3 = (
-            st.columns(3)
-        )
-
-        c1.metric(
-            "Budget",
-            euro(budget)
-        )
-
-        c2.metric(
-            "Lista",
-            euro(total)
-        )
-
-        c3.metric(
-            "Residuo",
-            euro(residual)
-        )
-
-        st.progress(
-            min(
-                percentage,
-                1
-            )
-        )
-
-        st.dataframe(
-            furniture,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        st.info(
-            "Per risparmiare puoi impostare "
-            "un budget massimo per stanza e "
-            "ordinare gli acquisti per priorità."
-        )
-
-
-# ============================================================
-# RENDERING
-# ============================================================
-
-elif menu == "🖼️ Rendering":
-
-    section_title(
-        "🖼️ Rendering & Planimetrie",
-        "Le immagini vengono estratte dal file Excel "
-        "mantenendo posizione e sovrapposizione."
-    )
-
-    if not excel:
-
-        st.error(
-            "Excel non trovato."
-        )
-
-    else:
-
-        available = [
-            sheet
-            for sheet in (
-                ROOM_SHEETS
-                +
-                PLAN_SHEETS
-            )
-            if sheet in excel["images"]
-        ]
-
-        if not available:
-
-            st.warning(
-                "Nessuna immagine trovata "
-                "nei fogli previsti."
-            )
-
-        else:
-
-            choice = st.selectbox(
-                "Seleziona ambiente / planimetria",
-                available
-            )
-
-            data = excel[
-                "images"
-            ][choice]
-
-            # ------------------------------------------------
-            # COMPOSIZIONE COMPLETA
-            # ------------------------------------------------
-
-            if data.get(
-                "composite"
-            ):
-
-                st.subheader(
-                    f"📐 Composizione completa — {choice}"
-                )
-
-                st.image(
-                    data["composite"],
-                    use_container_width=True
-                )
-
-                if choice in PLAN_SHEETS:
-
-                    st.caption(
-                        "La planimetria viene ricostruita "
-                        "mantenendo la posizione relativa "
-                        "delle diverse immagini incorporate "
-                        "nel foglio Excel."
-                    )
-
-            else:
-
-                st.warning(
-                    "Non è stato possibile creare "
-                    "la composizione automatica."
-                )
-
-            # ------------------------------------------------
-            # IMMAGINI SINGOLE
-            # ------------------------------------------------
-
-            with st.expander(
-                "🔎 Visualizza immagini singole"
-            ):
-
-                cols = st.columns(2)
-
-                for i, image in enumerate(
-                    data.get(
-                        "images",
-                        []
-                    )
-                ):
-
-                    with cols[
-                        i % 2
-                    ]:
-
-                        st.image(
-                            image["path"],
-                            caption=(
-                                f"Immagine {i + 1} · "
-                                f"posizione Excel "
-                                f"{image['x']},{image['y']}"
-                            ),
-                            use_container_width=True
-                        )
 
 
 # ============================================================
@@ -3229,145 +905,49 @@ elif menu == "🖼️ Rendering":
 elif menu == "💰 Entrate":
 
     section_title(
-        "💰 Entrate"
+        "💰 Entrate",
+        "Inserisci stipendio, bonus, rimborsi e altre entrate"
     )
 
-    with st.form(
-        "form_entrata"
-    ):
+    with st.form("nuova_entrata"):
 
-        description = st.text_input(
-            "Descrizione",
-            placeholder="Es. Stipendio"
-        )
+        c1, c2 = st.columns(2)
 
-        person = st.selectbox(
-            "Persona",
-            PEOPLE
-        )
+        with c1:
+            description = st.text_input(
+                "Descrizione",
+                placeholder="Es. Stipendio ottobre"
+            )
 
-        category = st.selectbox(
-            "Categoria",
-            INCOME_CATEGORIES
-        )
+        with c2:
+            category = st.selectbox(
+                "Categoria",
+                INCOME_CATEGORIES
+            )
 
-        amount = st.number_input(
-            "Importo (€)",
-            min_value=0.0,
-            step=50.0
-        )
+        c3, c4 = st.columns(2)
 
-        data = st.date_input(
+        with c3:
+            person = st.selectbox(
+                "Persona",
+                PEOPLE
+            )
+
+        with c4:
+            amount = st.number_input(
+                "Importo (€)",
+                min_value=0.0,
+                step=50.0
+            )
+
+        transaction_date = st.date_input(
             "Data",
             date.today()
         )
 
-        recurring = st.checkbox(
-            "Entrata ricorrente"
-        )
-
-        save = st.form_submit_button(
-            "💾 Salva entrata"
-        )
-
-        if (
-            save
-            and description.strip()
-            and amount > 0
-        ):
-
-            execute(
-                """
-                INSERT INTO entrate
-                (
-                    descrizione,
-                    persona,
-                    categoria,
-                    importo,
-                    data,
-                    ricorrente
-                )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    description,
-                    person,
-                    category,
-                    amount,
-                    data.isoformat(),
-                    int(recurring)
-                )
-            )
-
-            st.success(
-                "Entrata salvata."
-            )
-
-            st.rerun()
-
-    st.markdown("---")
-
-    df = qdf(
-        """
-        SELECT
-            id AS ID,
-            descrizione AS Descrizione,
-            persona AS Persona,
-            categoria AS Categoria,
-            importo AS Importo,
-            data AS Data
-        FROM entrate
-        ORDER BY data DESC
-        """
-    )
-
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
-
-
-# ============================================================
-# SPESE
-# ============================================================
-
-elif menu == "💸 Spese":
-
-    section_title(
-        "💸 Spese",
-        "Le nuove spese vengono salvate "
-        "nel database; lo storico resta nell'Excel."
-    )
-
-    with st.form(
-        "form_spesa"
-    ):
-
-        description = st.text_input(
-            "Descrizione",
-            placeholder="Es. Supermercato"
-        )
-
-        category = st.selectbox(
-            "Categoria",
-            EXPENSE_CATEGORIES
-        )
-
-        person = st.selectbox(
-            "Persona",
-            PEOPLE
-        )
-
-        amount = st.number_input(
-            "Importo (€)",
-            min_value=0.0,
-            step=5.0
-        )
-
-        data = st.date_input(
-            "Data",
-            date.today()
+        paid = st.checkbox(
+            "Entrata già ricevuta",
+            value=True
         )
 
         note = st.text_input(
@@ -3375,588 +955,727 @@ elif menu == "💸 Spese":
         )
 
         save = st.form_submit_button(
-            "💾 Salva spesa"
+            "💾 Salva entrata"
         )
 
-        if (
-            save
-            and description.strip()
-            and amount > 0
-        ):
+        if save:
 
-            execute(
-                """
-                INSERT INTO spese
-                (
-                    descrizione,
-                    persona,
-                    categoria,
-                    importo,
-                    data,
-                    note
+            if not description.strip():
+                st.error(
+                    "Inserisci una descrizione."
                 )
-                VALUES (?, ?, ?, ?, ?, ?)
-                """,
-                (
+
+            elif amount <= 0:
+                st.error(
+                    "Inserisci un importo maggiore di zero."
+                )
+
+            else:
+
+                execute("""
+                    INSERT INTO movimenti
+                    (
+                        tipo,
+                        data,
+                        categoria,
+                        descrizione,
+                        persona,
+                        importo,
+                        pagato,
+                        fonte,
+                        note
+                    )
+                    VALUES
+                    (
+                        'entrata',
+                        ?, ?, ?, ?, ?,  ?, 'manuale', ?
+                    )
+                """, (
+                    transaction_date.isoformat(),
+                    category,
                     description,
                     person,
-                    category,
                     amount,
-                    data.isoformat(),
+                    int(paid),
                     note
+                ))
+
+                st.success(
+                    "Entrata salvata."
                 )
-            )
 
-            st.success(
-                "Spesa salvata."
-            )
-
-            st.rerun()
+                st.rerun()
 
     st.markdown("---")
+    st.subheader("📋 Entrate inserite")
 
-    df = qdf(
-        """
+    df = query_df("""
         SELECT
             id AS ID,
-            descrizione AS Descrizione,
+            data AS Data,
             categoria AS Categoria,
+            descrizione AS Descrizione,
             persona AS Persona,
             importo AS Importo,
-            data AS Data,
             note AS Note
-        FROM spese
-        ORDER BY data DESC
-        """
-    )
+        FROM movimenti
+        WHERE tipo='entrata'
+        ORDER BY data DESC, id DESC
+    """)
 
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
+    if df.empty:
 
-    if not df.empty:
-
-        st.metric(
-            "Totale spese app",
-            euro(
-                df["Importo"].sum()
-            )
+        st.info(
+            "Nessuna entrata inserita."
         )
+
+    else:
+
+        st.dataframe(
+            df.style.format({
+                "Importo": lambda x: euro(x)
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+
+# ============================================================
+# SPESE
+# ============================================================
+
+elif menu == "💳 Spese":
+
+    section_title(
+        "💳 Spese",
+        "Puoi registrare una spesa singola oppure il totale mensile per categoria"
+    )
+
+    tabs = st.tabs([
+        "🧾 Singola spesa",
+        "📅 Spese mensili"
+    ])
+
+    # ========================================================
+    # SINGOLA SPESA
+    # ========================================================
+
+    with tabs[0]:
+
+        st.subheader(
+            "🧾 Inserisci una singola spesa"
+        )
+
+        st.caption(
+            "Esempio: supermercato €42,50, benzina €60, ristorante €75."
+        )
+
+        with st.form("singola_spesa"):
+
+            c1, c2 = st.columns(2)
+
+            with c1:
+
+                expense_date = st.date_input(
+                    "Data",
+                    date.today()
+                )
+
+                category = st.selectbox(
+                    "Categoria",
+                    EXPENSE_CATEGORIES
+                )
+
+            with c2:
+
+                person = st.selectbox(
+                    "Persona",
+                    PEOPLE
+                )
+
+                amount = st.number_input(
+                    "Importo (€)",
+                    min_value=0.0,
+                    step=5.0
+                )
+
+            description = st.text_input(
+                "Descrizione",
+                placeholder="Es. Spesa supermercato"
+            )
+
+            note = st.text_input(
+                "Note"
+            )
+
+            paid = st.checkbox(
+                "Spesa già pagata",
+                value=True
+            )
+
+            save = st.form_submit_button(
+                "💾 Salva spesa"
+            )
+
+            if save:
+
+                if amount <= 0:
+
+                    st.error(
+                        "Inserisci un importo maggiore di zero."
+                    )
+
+                elif not description.strip():
+
+                    st.error(
+                        "Inserisci una descrizione."
+                    )
+
+                else:
+
+                    execute("""
+                        INSERT INTO movimenti
+                        (
+                            tipo,
+                            data,
+                            categoria,
+                            descrizione,
+                            persona,
+                            importo,
+                            pagato,
+                            fonte,
+                            note
+                        )
+                        VALUES
+                        (
+                            'uscita',
+                            ?, ?, ?, ?, ?, ?, 'manuale', ?
+                        )
+                    """, (
+                        expense_date.isoformat(),
+                        category,
+                        description,
+                        person,
+                        amount,
+                        int(paid),
+                        note
+                    ))
+
+                    st.success(
+                        "Spesa salvata."
+                    )
+
+                    st.rerun()
+
+        st.markdown("---")
+
+        st.subheader(
+            "📋 Spese singole inserite"
+        )
+
+        df = query_df("""
+            SELECT
+                id AS ID,
+                data AS Data,
+                categoria AS Categoria,
+                descrizione AS Descrizione,
+                persona AS Persona,
+                importo AS Importo,
+                pagato AS Pagata
+            FROM movimenti
+            WHERE tipo='uscita'
+            ORDER BY data DESC, id DESC
+        """)
+
+        if df.empty:
+
+            st.info(
+                "Nessuna spesa singola inserita."
+            )
+
+        else:
+
+            df["Pagata"] = df["Pagata"].map(
+                lambda x: "Sì" if x else "No"
+            )
+
+            st.dataframe(
+                df.style.format({
+                    "Importo": lambda x: euro(x)
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.caption(
+                "Per cancellare una spesa usa la sezione Impostazioni → Gestione dati."
+            )
+
+    # ========================================================
+    # SPESE MENSILI
+    # ========================================================
+
+    with tabs[1]:
+
+        st.subheader(
+            "📅 Inserisci le spese del mese per categoria"
+        )
+
+        st.caption(
+            "Questa modalità è ideale quando conosci già il totale mensile "
+            "senza voler inserire ogni singola ricevuta."
+        )
+
+        selected = st.date_input(
+            "Mese",
+            date.today().replace(day=1),
+            key="monthly_expense_date"
+        )
+
+        selected_key = month_key(
+            selected.year,
+            selected.month
+        )
+
+        existing = query_df("""
+            SELECT
+                categoria,
+                importo,
+                fonte
+            FROM spese_mensili
+            WHERE mese=?
+        """, (selected_key,))
+
+        existing_dict = {}
+
+        if not existing.empty:
+
+            for _, row in existing.iterrows():
+
+                category = row["categoria"]
+
+                existing_dict[category] = (
+                    existing_dict.get(category, 0)
+                    + float(row["importo"])
+                )
+
+        st.info(
+            "⚠️ Importante: se inserisci il totale mensile di una categoria "
+            "e anche singole spese della stessa categoria nello stesso mese, "
+            "l'app considererà entrambi gli importi."
+        )
+
+        with st.form("spese_mensili"):
+
+            values = {}
+
+            columns = st.columns(2)
+
+            for index, category in enumerate(
+                EXPENSE_CATEGORIES
+            ):
+
+                with columns[index % 2]:
+
+                    values[category] = st.number_input(
+                        category,
+                        min_value=0.0,
+                        value=float(
+                            existing_dict.get(
+                                category,
+                                0
+                            )
+                        ),
+                        step=10.0,
+                        key=f"monthly_{selected_key}_{category}"
+                    )
+
+            save_month = st.form_submit_button(
+                "💾 Salva mese"
+            )
+
+            if save_month:
+
+                # Elimina i valori manuali del mese.
+                # Quelli Excel vengono preservati.
+                execute("""
+                    DELETE FROM spese_mensili
+                    WHERE mese=?
+                    AND fonte='manuale'
+                """, (selected_key,))
+
+                for category, amount in values.items():
+
+                    if amount > 0:
+
+                        execute("""
+                            INSERT INTO spese_mensili
+                            (
+                                mese,
+                                categoria,
+                                importo,
+                                fonte,
+                                source_key
+                            )
+                            VALUES (?, ?, ?, 'manuale', ?)
+                        """, (
+                            selected_key,
+                            category,
+                            amount,
+                            f"manuale|{selected_key}|{category}"
+                        ))
+
+                st.success(
+                    f"Spese di {month_label(selected.year, selected.month)} salvate."
+                )
+
+                st.rerun()
+
+        st.markdown("---")
+
+        monthly_view = query_df("""
+            SELECT
+                categoria AS Categoria,
+                SUM(importo) AS Importo,
+                GROUP_CONCAT(DISTINCT fonte) AS Fonte
+            FROM spese_mensili
+            WHERE mese=?
+            GROUP BY categoria
+            ORDER BY Importo DESC
+        """, (selected_key,))
+
+        if not monthly_view.empty:
+
+            total = monthly_view["Importo"].sum()
+
+            st.metric(
+                "Totale spese mensili",
+                euro(total)
+            )
+
+            st.dataframe(
+                monthly_view.style.format({
+                    "Importo": lambda x: euro(x)
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        else:
+
+            st.info(
+                "Nessuna spesa mensile registrata per questo mese."
+            )
 
 
 # ============================================================
 # RICORRENTI
 # ============================================================
 
-elif menu == "🔁 Ricorrenti":
+elif menu == "🔁 Spese ricorrenti":
 
     section_title(
-        "🔁 Spese ricorrenti"
+        "🔁 Spese ricorrenti",
+        "Costi che si ripetono ogni mese"
     )
 
-    with st.form(
-        "form_ricorrente"
-    ):
+    with st.form("nuova_ricorrente"):
 
         description = st.text_input(
             "Descrizione",
-            placeholder="Es. Assicurazione"
+            placeholder="Es. Mutuo"
         )
 
-        category = st.selectbox(
-            "Categoria",
-            EXPENSE_CATEGORIES
-        )
+        c1, c2 = st.columns(2)
 
-        amount = st.number_input(
-            "Importo mensile (€)",
-            min_value=0.0,
-            step=10.0
-        )
+        with c1:
 
-        day = st.number_input(
-            "Giorno",
-            min_value=1,
-            max_value=31,
-            value=1
-        )
+            category = st.selectbox(
+                "Categoria",
+                EXPENSE_CATEGORIES
+            )
 
-        person = st.selectbox(
-            "Persona",
-            PEOPLE
-        )
+            amount = st.number_input(
+                "Importo mensile (€)",
+                min_value=0.0,
+                step=10.0
+            )
+
+        with c2:
+
+            day = st.number_input(
+                "Giorno previsto",
+                min_value=1,
+                max_value=31,
+                value=1
+            )
+
+            person = st.selectbox(
+                "Persona",
+                PEOPLE
+            )
 
         save = st.form_submit_button(
-            "➕ Aggiungi"
+            "➕ Aggiungi ricorrente"
         )
 
-        if (
-            save
-            and description.strip()
-            and amount > 0
-        ):
+        if save:
 
-            execute(
-                """
-                INSERT INTO ricorrenti
-                (
-                    descrizione,
-                    categoria,
-                    importo,
-                    giorno,
-                    persona
+            if not description.strip():
+                st.error(
+                    "Inserisci una descrizione."
                 )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                (
+
+            elif amount <= 0:
+                st.error(
+                    "Inserisci un importo."
+                )
+
+            else:
+
+                execute("""
+                    INSERT INTO ricorrenti
+                    (
+                        descrizione,
+                        categoria,
+                        importo,
+                        giorno,
+                        persona,
+                        attiva
+                    )
+                    VALUES (?, ?, ?, ?, ?, 1)
+                """, (
                     description,
                     category,
                     amount,
                     day,
                     person
+                ))
+
+                st.success(
+                    "Spesa ricorrente aggiunta."
                 )
-            )
 
-            st.success(
-                "Spesa ricorrente aggiunta."
-            )
-
-            st.rerun()
+                st.rerun()
 
     st.markdown("---")
 
-    df = qdf(
-        """
+    df = query_df("""
         SELECT
             id AS ID,
             descrizione AS Descrizione,
             categoria AS Categoria,
             importo AS Importo,
             giorno AS Giorno,
-            persona AS Persona
+            persona AS Persona,
+            attiva AS Attiva
         FROM ricorrenti
         ORDER BY giorno
-        """
-    )
+    """)
 
-    st.dataframe(
-        df,
-        use_container_width=True,
-        hide_index=True
-    )
+    if df.empty:
 
-    st.metric(
-        "💸 Totale fisso mensile",
-        euro(
-            df["Importo"].sum()
-            if not df.empty
-            else 0
+        st.info(
+            "Nessuna spesa ricorrente."
         )
-    )
+
+    else:
+
+        total = df.loc[
+            df["Attiva"] == 1,
+            "Importo"
+        ].sum()
+
+        st.metric(
+            "💳 Totale ricorrenti mensili",
+            euro(total)
+        )
+
+        df["Attiva"] = df["Attiva"].map(
+            lambda x: "Sì" if x else "No"
+        )
+
+        st.dataframe(
+            df.style.format({
+                "Importo": lambda x: euro(x)
+            }),
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.caption(
+            "Le spese ricorrenti vengono considerate nel calcolo "
+            "di 'Quanto posso spendere oggi?'."
+        )
 
 
 # ============================================================
-# BUDGET E LINEE GUIDA
+# BUDGET
 # ============================================================
 
 elif menu == "📅 Budget":
 
     section_title(
-        "📅 Budget e linee guida per risparmiare",
-        "Il budget viene costruito partendo "
-        "dalle tue spese storiche reali."
+        "📅 Budget mensile",
+        "Imposta quanto vuoi spendere al massimo per ogni categoria"
     )
 
-    # --------------------------------------------------------
-    # OBIETTIVO
-    # --------------------------------------------------------
-
-    st.subheader(
-        "1. Obiettivo di risparmio"
+    selected = st.date_input(
+        "📅 Mese",
+        date.today().replace(day=1),
+        key="budget_month"
     )
 
-    target = st.slider(
-        "Percentuale di reddito da destinare al risparmio",
-        0,
-        30,
-        15,
-        1,
-        format="%d%%"
+    key = month_key(
+        selected.year,
+        selected.month
     )
 
-    income = st.number_input(
-        "Entrate mensili di riferimento (€)",
-        min_value=0.0,
-        value=0.0,
-        step=100.0
-    )
+    existing_budget = query_df("""
+        SELECT categoria, importo
+        FROM budget_mensile
+        WHERE mese=?
+    """, (key,))
 
-    months_window = st.selectbox(
-        "Periodo storico",
-        [
-            3,
-            6,
-            12
-        ],
-        index=2
-    )
+    budget_dict = {}
 
-    target_amount = (
-        income
-        *
-        target
-        /
-        100
-    )
+    if not existing_budget.empty:
 
-    variable_budget = max(
-        0,
-        income
-        -
-        target_amount
-    )
+        for _, row in existing_budget.iterrows():
 
-    c1, c2 = (
-        st.columns(2)
-    )
-
-    c1.metric(
-        "Risparmio obiettivo",
-        euro(target_amount)
-    )
-
-    c2.metric(
-        "Spesa massima teorica",
-        euro(variable_budget)
-    )
-
-    # --------------------------------------------------------
-    # BUDGET GUIDA
-    # --------------------------------------------------------
-
-    st.subheader(
-        "2. Budget guida per categoria"
-    )
-
-    guide = (
-        savings_guideline_table(
-            months_window,
-            target,
-            income
-        )
-    )
-
-    if guide.empty:
-
-        st.info(
-            "Per generare la guida servono "
-            "lo storico Excel e un'entrata "
-            "mensile di riferimento."
-        )
-
-    else:
-
-        st.dataframe(
-            guide,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        st.markdown(
-            "**Regola utilizzata:** il budget "
-            "guida riduce proporzionalmente "
-            "la tua spesa storica media per "
-            "lasciare spazio all'obiettivo "
-            "di risparmio."
-        )
-
-        # ----------------------------------------------------
-        # TRE LIVELLI
-        # ----------------------------------------------------
-
-        total_history = (
-            guide[
-                "Media mensile"
-            ].sum()
-        )
-
-        st.subheader(
-            "3. Tre livelli pratici"
-        )
-
-        levels = pd.DataFrame(
-            [
-                {
-                    "Profilo":
-                        "Prudente",
-
-                    "Risparmio":
-                        "10%",
-
-                    "Spesa massima":
-                        euro(
-                            income * 0.90
-                        ),
-
-                    "Differenza vs media":
-                        euro(
-                            income * 0.90
-                            -
-                            total_history
-                        )
-                },
-
-                {
-                    "Profilo":
-                        "Equilibrato",
-
-                    "Risparmio":
-                        "15%",
-
-                    "Spesa massima":
-                        euro(
-                            income * 0.85
-                        ),
-
-                    "Differenza vs media":
-                        euro(
-                            income * 0.85
-                            -
-                            total_history
-                        )
-                },
-
-                {
-                    "Profilo":
-                        "Risparmio forte",
-
-                    "Risparmio":
-                        "20%",
-
-                    "Spesa massima":
-                        euro(
-                            income * 0.80
-                        ),
-
-                    "Differenza vs media":
-                        euro(
-                            income * 0.80
-                            -
-                            total_history
-                        )
-                }
-            ]
-        )
-
-        st.dataframe(
-            levels,
-            use_container_width=True,
-            hide_index=True
-        )
-
-    # --------------------------------------------------------
-    # SALVA BUDGET
-    # --------------------------------------------------------
-
-    st.markdown("---")
-
-    st.subheader(
-        "4. Imposta il budget di una categoria"
-    )
-
-    category = st.selectbox(
-        "Categoria",
-        EXPENSE_CATEGORIES
-    )
-
-    amount = st.number_input(
-        "Budget mensile (€)",
-        min_value=0.0,
-        step=50.0
-    )
-
-    if st.button(
-        "💾 Salva budget"
-    ):
-
-        execute(
-            """
-            INSERT INTO budget
-            (
-                categoria,
-                importo
+            budget_dict[row["categoria"]] = float(
+                row["importo"]
             )
-            VALUES (?, ?)
 
-            ON CONFLICT(categoria)
-            DO UPDATE SET
-                importo =
-                    excluded.importo
-            """,
-            (
-                category,
-                amount
-            )
-        )
+    with st.form("budget_form"):
 
-        st.success(
-            "Budget salvato."
-        )
+        budget_values = {}
 
-        st.rerun()
+        cols = st.columns(2)
 
-    # --------------------------------------------------------
-    # CONTROLLO MESE
-    # --------------------------------------------------------
-
-    st.markdown("---")
-
-    st.subheader(
-        "5. Verifica il mese"
-    )
-
-    selected_month = st.date_input(
-        "Mese da controllare",
-        date.today().replace(
-            day=1
-        )
-    )
-
-    year = (
-        selected_month.year
-    )
-
-    month = (
-        selected_month.month
-    )
-
-    budgets = qdf(
-        """
-        SELECT
-            categoria,
-            importo
-        FROM budget
-        """
-    )
-
-    rows = []
-
-    for _, row in budgets.iterrows():
-
-        spent_excel = 0
-
-        if (
-            excel
-            and not excel["family"].empty
+        for index, category in enumerate(
+            EXPENSE_CATEGORIES
         ):
 
-            spent_excel = (
-                excel["family"]
-                .loc[
-                    (
-                        excel["family"].anno
-                        == year
-                    )
-                    &
-                    (
-                        excel["family"].mese
-                        == month
-                    )
-                    &
-                    (
-                        excel["family"].categoria
-                        == row["categoria"]
+            with cols[index % 2]:
+
+                budget_values[category] = st.number_input(
+                    category,
+                    min_value=0.0,
+                    value=float(
+                        budget_dict.get(
+                            category,
+                            0
+                        )
                     ),
-                    "importo"
-                ]
-                .sum()
-            )
-
-        spent_app = float(
-            qdf(
-                """
-                SELECT
-                    COALESCE(
-                        SUM(importo),
-                        0
-                    )
-                FROM spese
-
-                WHERE categoria=?
-
-                AND strftime(
-                    '%Y',
-                    data
-                )=?
-
-                AND strftime(
-                    '%m',
-                    data
-                )=?
-                """,
-                (
-                    row["categoria"],
-                    str(year),
-                    f"{month:02d}"
+                    step=25.0,
+                    key=f"budget_{key}_{category}"
                 )
-            ).iloc[0, 0]
+
+        save_budget = st.form_submit_button(
+            "💾 Salva budget"
         )
 
-        spent = (
-            float(spent_excel)
-            +
-            spent_app
-        )
+        if save_budget:
 
-        rows.append(
-            {
-                "Categoria":
-                    row["categoria"],
+            execute("""
+                DELETE FROM budget_mensile
+                WHERE mese=?
+            """, (key,))
 
-                "Budget":
-                    row["importo"],
+            for category, amount in budget_values.items():
 
-                "Speso":
-                    spent,
+                if amount > 0:
 
-                "Residuo":
-                    row["importo"]
-                    -
-                    spent
-            }
-        )
+                    execute("""
+                        INSERT INTO budget_mensile
+                        (
+                            mese,
+                            categoria,
+                            importo
+                        )
+                        VALUES (?, ?, ?)
+                    """, (
+                        key,
+                        category,
+                        amount
+                    ))
 
-    if rows:
-
-        budget_result = pd.DataFrame(
-            rows
-        )
-
-        st.dataframe(
-            budget_result,
-            use_container_width=True,
-            hide_index=True
-        )
-
-        over = budget_result[
-            budget_result[
-                "Residuo"
-            ] < 0
-        ]
-
-        if not over.empty:
-
-            st.warning(
-                "Alcune categorie "
-                "sono oltre il budget."
+            st.success(
+                "Budget salvato."
             )
+
+            st.rerun()
+
+    st.markdown("---")
+
+    st.subheader(
+        f"📊 Situazione {month_label(selected.year, selected.month)}"
+    )
+
+    spent = monthly_expenses_by_category(
+        selected.year,
+        selected.month
+    )
+
+    budget = get_budget(key)
+
+    if budget.empty:
+
+        st.info(
+            "Inserisci almeno un budget per vedere il confronto."
+        )
 
     else:
 
-        st.info(
-            "Nessun budget impostato."
+        rows = []
+
+        for _, row in budget.iterrows():
+
+            category = row["categoria"]
+            budget_value = float(row["importo"])
+
+            spent_value = 0
+
+            if not spent.empty:
+
+                match = spent[
+                    spent["categoria"] == category
+                ]
+
+                if not match.empty:
+
+                    spent_value = float(
+                        match.iloc[0]["importo"]
+                    )
+
+            remaining = budget_value - spent_value
+
+            percentage = (
+                spent_value / budget_value * 100
+                if budget_value > 0
+                else 0
+            )
+
+            rows.append({
+                "Categoria": category,
+                "Budget": budget_value,
+                "Speso": spent_value,
+                "Residuo": remaining,
+                "% utilizzata": percentage
+            })
+
+        result = pd.DataFrame(rows)
+
+        st.dataframe(
+            result.style.format({
+                "Budget": lambda x: euro(x),
+                "Speso": lambda x: euro(x),
+                "Residuo": lambda x: euro(x),
+                "% utilizzata": lambda x: f"{x:.1f}%"
+            }),
+            use_container_width=True,
+            hide_index=True
         )
 
 
@@ -3967,503 +1686,339 @@ elif menu == "📅 Budget":
 elif menu == "🎯 Obiettivi":
 
     section_title(
-        "🎯 Obiettivi di risparmio"
+        "🎯 Obiettivi di risparmio",
+        "Tieni sotto controllo i soldi che vuoi accantonare"
     )
 
-    with st.form(
-        "goal"
-    ):
+    with st.form("nuovo_obiettivo"):
 
         name = st.text_input(
-            "Nome"
+            "Nome obiettivo",
+            placeholder="Es. Vacanza"
         )
 
-        target = st.number_input(
-            "Obiettivo (€)",
-            min_value=0.0,
-            step=500.0
-        )
+        c1, c2 = st.columns(2)
 
-        saved = st.number_input(
-            "Accumulato (€)",
-            min_value=0.0,
-            step=100.0
-        )
+        with c1:
+
+            target = st.number_input(
+                "Obiettivo (€)",
+                min_value=0.0,
+                step=500.0
+            )
+
+        with c2:
+
+            saved = st.number_input(
+                "Già accumulato (€)",
+                min_value=0.0,
+                step=100.0
+            )
 
         deadline = st.date_input(
             "Scadenza",
             date.today()
         )
 
-        ok = st.form_submit_button(
-            "🎯 Crea"
+        create = st.form_submit_button(
+            "🎯 Crea obiettivo"
         )
 
-        if (
-            ok
-            and name.strip()
-            and target > 0
-        ):
+        if create:
 
-            execute(
-                """
-                INSERT INTO obiettivi
-                (
-                    nome,
-                    obiettivo,
-                    accumulato,
-                    scadenza
+            if not name.strip():
+                st.error(
+                    "Inserisci un nome."
                 )
-                VALUES (?, ?, ?, ?)
-                """,
-                (
+
+            elif target <= 0:
+                st.error(
+                    "Inserisci un obiettivo maggiore di zero."
+                )
+
+            else:
+
+                execute("""
+                    INSERT INTO obiettivi
+                    (
+                        nome,
+                        obiettivo,
+                        accumulato,
+                        scadenza,
+                        attivo
+                    )
+                    VALUES (?, ?, ?, ?, 1)
+                """, (
                     name,
                     target,
                     saved,
                     deadline.isoformat()
+                ))
+
+                st.success(
+                    "Obiettivo creato."
                 )
-            )
 
-            st.success(
-                "Obiettivo creato."
-            )
+                st.rerun()
 
-            st.rerun()
+    st.markdown("---")
 
-    df = qdf(
-        """
+    goals = query_df("""
         SELECT *
         FROM obiettivi
+        WHERE attivo=1
         ORDER BY scadenza
-        """
-    )
+    """)
 
-    if df.empty:
+    if goals.empty:
 
         st.info(
-            "Nessun obiettivo."
+            "Nessun obiettivo attivo."
         )
 
     else:
 
-        for _, row in df.iterrows():
+        for _, goal in goals.iterrows():
 
-            percentage = (
-                row["accumulato"]
-                /
-                row["obiettivo"]
-                if row["obiettivo"]
+            target = float(goal["obiettivo"])
+            saved = float(goal["accumulato"])
+
+            progress = (
+                saved / target
+                if target > 0
                 else 0
             )
 
-            percentage = min(
-                max(
-                    percentage,
-                    0
-                ),
+            progress = min(
+                max(progress, 0),
                 1
             )
 
             st.subheader(
-                f"🎯 {row['nome']}"
+                f"🎯 {goal['nome']}"
             )
 
-            st.progress(
-                percentage
-            )
+            st.progress(progress)
 
             st.write(
-                f"{euro(row['accumulato'])} "
-                f"/ "
-                f"{euro(row['obiettivo'])}"
+                f"**{euro(saved)}** / {euro(target)} "
+                f"({progress * 100:.1f}%)"
             )
 
             st.caption(
-                f"Scadenza: "
-                f"{row['scadenza']}"
+                f"Scadenza: {goal['scadenza']}"
             )
 
 
 # ============================================================
-# QUANTO POSSO SPENDERE OGGI?
+# QUANTO POSSO SPENDERE OGGI
 # ============================================================
 
-elif menu == "💳 Quanto posso spendere oggi?":
+elif menu == "💸 Quanto posso spendere oggi?":
 
     section_title(
-        "💳 Quanto posso spendere oggi?",
-        "Calcola un limite giornaliero pratico "
-        "per arrivare a fine mese mantenendo "
-        "il risparmio desiderato."
+        "💸 Quanto posso spendere oggi?",
+        "Calcolo della disponibilità reale considerando spese già sostenute e impegni previsti"
+    )
+
+    today = date.today()
+
+    st.info(
+        f"📅 Calcolo riferito a oggi: {today.strftime('%d/%m/%Y')}"
     )
 
     # --------------------------------------------------------
-    # DATA
+    # MESE
     # --------------------------------------------------------
 
-    selected_date = st.date_input(
-        "📅 Data di riferimento",
-        date.today()
-    )
-
-    year = (
-        selected_date.year
-    )
-
-    month = (
-        selected_date.month
-    )
+    year = today.year
+    month = today.month
+    key = month_key(year, month)
 
     # --------------------------------------------------------
     # ENTRATE
     # --------------------------------------------------------
 
-    actual_income = (
-        month_income_app(
-            year,
-            month
-        )
+    income = monthly_income_total(
+        year,
+        month
     )
-
-    default_income = (
-        actual_income
-        if actual_income > 0
-        else 4500.0
-    )
-
-    st.subheader(
-        "1. Regole del mese"
-    )
-
-    c1, c2, c3 = (
-        st.columns(3)
-    )
-
-    with c1:
-
-        expected_income = st.number_input(
-            "Entrate previste (€)",
-            min_value=0.0,
-            value=float(
-                default_income
-            ),
-            step=100.0,
-            help=(
-                "Inserisci le entrate "
-                "familiari previste "
-                "per il mese."
-            )
-        )
-
-    with c2:
-
-        target_saving_pct = st.slider(
-            "Risparmio obiettivo",
-            0,
-            40,
-            15,
-            1,
-            format="%d%%"
-        )
-
-    with c3:
-
-        safety_buffer = st.number_input(
-            "Cuscinetto sicurezza (€)",
-            min_value=0.0,
-            value=100.0,
-            step=50.0
-        )
 
     # --------------------------------------------------------
-    # IMPEGNI
+    # SPESE GIÀ FATTE
     # --------------------------------------------------------
 
-    st.subheader(
-        "2. Impegni da considerare"
+    spent = monthly_expenses_total(
+        year,
+        month
     )
 
-    c1, c2 = (
-        st.columns(2)
+    # --------------------------------------------------------
+    # RICORRENTI ANCORA DA PAGARE
+    # --------------------------------------------------------
+
+    recurring_remaining = recurring_remaining_today()
+
+    # --------------------------------------------------------
+    # SPESE FUTURE
+    # --------------------------------------------------------
+
+    future = future_expenses_remaining(
+        year,
+        month
     )
 
-    with c1:
+    # --------------------------------------------------------
+    # RISPARMIO PROGRAMMATO
+    # --------------------------------------------------------
 
-        include_house = st.checkbox(
-            "🏡 Includi costo mensile nuova casa",
-            True
-        )
+    saving_target = get_setting(
+        "risparmio_mensile_target",
+        0
+    )
 
-        include_recurring = st.checkbox(
-            "🔁 Includi spese ricorrenti",
-            True
-        )
-
-    with c2:
-
-        include_future = st.checkbox(
-            "📅 Includi spese future del mese",
-            True
-        )
-
-        house_period = st.selectbox(
-            "Periodo nuova casa",
-            [
-                "Primi 5 anni",
-                "6° anno",
-                "7°-10° anno"
-            ],
-            disabled=not include_house
-        )
+    safety_fund = get_setting(
+        "fondo_sicurezza",
+        500
+    )
 
     # --------------------------------------------------------
     # CALCOLO
     # --------------------------------------------------------
 
-    result = daily_spending_plan(
-        target_saving_pct,
-        expected_income,
-        selected_date,
-        include_house,
-        include_recurring,
-        include_future,
-        safety_buffer,
-        house_period
+    available = (
+        income
+        - spent
+        - recurring_remaining
+        - future
+        - saving_target
+        - safety_fund
     )
+
+    last_day = calendar.monthrange(
+        year,
+        month
+    )[1]
+
+    days_remaining = (
+        last_day - today.day + 1
+    )
+
+    daily_budget = (
+        available / days_remaining
+        if days_remaining > 0
+        else 0
+    )
+
+    # --------------------------------------------------------
+    # RISULTATO
+    # --------------------------------------------------------
 
     st.markdown("---")
 
-    st.subheader(
-        "3. Il risultato"
-    )
+    if available >= 0:
 
-    c1, c2 = (
-        st.columns(2)
-    )
-
-    with c1:
-
-        st.metric(
-            "💳 Puoi spendere oggi",
-            euro(
-                result["daily"]
-            ),
-            help=(
-                "Budget medio giornaliero "
-                "disponibile da oggi alla "
-                "fine del mese."
-            )
-        )
-
-    with c2:
-
-        st.metric(
-            "📆 Budget residuo del mese",
-            euro(
-                max(
-                    0,
-                    result["remaining"]
-                )
-            )
-        )
-
-    if result["remaining"] < 0:
-
-        st.error(
-            f"⚠️ Il piano è in deficit di "
-            f"{euro(abs(result['remaining']))}. "
-            "Per rispettare il piano devi "
-            "ridurre le spese, aumentare "
-            "le entrate o modificare "
-            "l'obiettivo di risparmio."
-        )
-
-    elif result["daily"] == 0:
-
-        st.warning(
-            "Il budget discrezionale "
-            "giornaliero è pari a 0 €."
+        st.success(
+            f"💚 Disponibilità residua del mese: **{euro(available)}**"
         )
 
     else:
 
-        st.success(
-            f"Con un obiettivo di risparmio "
-            f"del {target_saving_pct}%, "
-            f"il tuo limite medio è "
-            f"**{euro(result['daily'])} al giorno**."
+        st.error(
+            f"🔴 Il budget del mese è già oltre il limite di "
+            f"**{euro(abs(available))}**"
         )
 
-    # --------------------------------------------------------
-    # DETTAGLIO CALCOLO
-    # --------------------------------------------------------
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "💰 Disponibile",
+        euro(available)
+    )
+
+    c2.metric(
+        "📅 Giorni rimanenti",
+        days_remaining
+    )
+
+    c3.metric(
+        "💸 Budget giornaliero",
+        euro(max(0, daily_budget))
+    )
 
     st.markdown("---")
 
     st.subheader(
-        "4. Come viene calcolato"
+        "🔎 Come viene calcolato"
     )
 
-    breakdown = pd.DataFrame(
-        [
-            {
-                "Voce":
-                    "Entrate previste",
-
-                "Importo":
-                    result["income"]
-            },
-
-            {
-                "Voce":
-                    "Spese già sostenute",
-
-                "Importo":
-                    -result["actual_spent"]
-            },
-
-            {
-                "Voce":
-                    "Spese ricorrenti",
-
-                "Importo":
-                    -result["recurring"]
-            },
-
-            {
-                "Voce":
-                    "Spese future",
-
-                "Importo":
-                    -result["future"]
-            },
-
-            {
-                "Voce":
-                    "Nuova casa",
-
-                "Importo":
-                    -result["house"]
-            },
-
-            {
-                "Voce":
-                    f"Risparmio obiettivo "
-                    f"({target_saving_pct}%)",
-
-                "Importo":
-                    -result["saving"]
-            },
-
-            {
-                "Voce":
-                    "Cuscinetto sicurezza",
-
-                "Importo":
-                    -result["buffer"]
-            },
-
-            {
-                "Voce":
-                    "Budget residuo",
-
-                "Importo":
-                    result["remaining"]
-            }
+    calculation = pd.DataFrame({
+        "Voce": [
+            "Entrate del mese",
+            "Spese già sostenute",
+            "Ricorrenti ancora previste",
+            "Spese future",
+            "Risparmio programmato",
+            "Fondo sicurezza",
+            "Disponibilità residua"
+        ],
+        "Importo": [
+            income,
+            -spent,
+            -recurring_remaining,
+            -future,
+            -saving_target,
+            -safety_fund,
+            available
         ]
-    )
+    })
 
     st.dataframe(
-        breakdown,
+        calculation.style.format({
+            "Importo": lambda x: euro(x)
+        }),
         use_container_width=True,
         hide_index=True
     )
 
     st.caption(
-        f"Il calcolo considera "
-        f"{result['days_remaining']} giorni "
-        "compreso oggi."
+        "Il budget giornaliero è una stima: non considera eventuali "
+        "entrate straordinarie non ancora registrate."
     )
 
     # --------------------------------------------------------
-    # CONFRONTO STORICO
+    # SIMULATORE
     # --------------------------------------------------------
 
     st.markdown("---")
 
     st.subheader(
-        "5. Confronto con le tue abitudini"
+        "🧮 Simula una spesa"
     )
 
-    history = (
-        historical_average_by_category(
-            12
-        )
+    simulated_expense = st.number_input(
+        "Se oggi spendessi...",
+        min_value=0.0,
+        step=10.0
     )
 
-    if history.empty:
+    simulated_remaining = (
+        available - simulated_expense
+    )
 
-        st.info(
-            "Lo storico Excel non contiene "
-            "abbastanza dati."
+    if simulated_remaining >= 0:
+
+        st.success(
+            f"Dopo questa spesa avresti ancora "
+            f"**{euro(simulated_remaining)}** disponibili."
         )
 
     else:
 
-        history_total = (
-            history[
-                "Media mensile"
-            ].sum()
+        st.warning(
+            f"Con questa spesa supereresti la disponibilità "
+            f"di **{euro(abs(simulated_remaining))}**."
         )
-
-        c1, c2 = (
-            st.columns(2)
-        )
-
-        c1.metric(
-            "Media storica mensile",
-            euro(history_total)
-        )
-
-        c2.metric(
-            "Budget giornaliero",
-            euro(result["daily"])
-        )
-
-        if history_total > 0:
-
-            history = history.copy()
-
-            history["Peso"] = (
-                history[
-                    "Media mensile"
-                ]
-                /
-                history_total
-            )
-
-            history[
-                "Budget guida residuo"
-            ] = (
-                history["Peso"]
-                *
-                max(
-                    0,
-                    result["remaining"]
-                )
-            )
-
-            st.dataframe(
-                history[
-                    [
-                        "Categoria",
-                        "Media mensile",
-                        "Budget guida residuo"
-                    ]
-                ],
-                use_container_width=True,
-                hide_index=True
-            )
 
 
 # ============================================================
@@ -4473,78 +2028,118 @@ elif menu == "💳 Quanto posso spendere oggi?":
 elif menu == "📊 Analisi":
 
     section_title(
-        "📊 Analisi finanziaria"
+        "📊 Analisi",
+        "Analizza come vengono distribuite le spese"
     )
 
-    if (
-        excel
-        and not excel["family"].empty
-    ):
+    selected = st.date_input(
+        "Mese da analizzare",
+        date.today().replace(day=1),
+        key="analysis_month"
+    )
 
-        df = excel[
-            "family"
-        ]
+    year = selected.year
+    month = selected.month
 
-        monthly = (
-            df
-            .groupby(
-                [
-                    "anno",
-                    "mese"
-                ],
-                as_index=False
-            )["importo"]
-            .sum()
+    expenses = monthly_expenses_by_category(
+        year,
+        month
+    )
+
+    income = monthly_income_total(
+        year,
+        month
+    )
+
+    total_expenses = (
+        expenses["importo"].sum()
+        if not expenses.empty
+        else 0
+    )
+
+    savings = income - total_expenses
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        "Entrate",
+        euro(income)
+    )
+
+    c2.metric(
+        "Spese",
+        euro(total_expenses)
+    )
+
+    c3.metric(
+        "Risparmio",
+        euro(savings)
+    )
+
+    if not expenses.empty:
+
+        st.markdown("---")
+
+        st.subheader(
+            "🥧 Distribuzione delle spese"
         )
 
-        monthly["Mese"] = (
-            monthly.apply(
-                lambda row:
-                    month_label(
-                        int(row["anno"]),
-                        int(row["mese"])
-                    ),
-                axis=1
+        c1, c2 = st.columns(2)
+
+        with c1:
+
+            fig, ax = plt.subplots(
+                figsize=(6, 6)
             )
-        )
 
-        st.dataframe(
-            monthly[
-                [
-                    "Mese",
-                    "importo"
-                ]
-            ].rename(
-                columns={
-                    "importo":
-                        "Spese"
-                }
-            ),
-            use_container_width=True,
-            hide_index=True
+            ax.pie(
+                expenses["importo"],
+                labels=expenses["categoria"],
+                autopct="%1.1f%%",
+                startangle=90
+            )
+
+            ax.axis("equal")
+
+            st.pyplot(
+                fig,
+                clear_figure=True
+            )
+
+        with c2:
+
+            st.dataframe(
+                expenses.style.format({
+                    "importo": lambda x: euro(x)
+                }),
+                use_container_width=True,
+                hide_index=True
+            )
+
+        st.markdown("---")
+
+        st.subheader(
+            "📊 Spese per categoria"
         )
 
         fig, ax = plt.subplots(
-            figsize=(10, 4)
+            figsize=(10, 5)
         )
 
-        ax.plot(
-            monthly["Mese"],
-            monthly["importo"],
-            marker="o"
+        ax.bar(
+            expenses["categoria"],
+            expenses["importo"]
         )
 
+        ax.set_ylabel("€")
         ax.tick_params(
             axis="x",
             rotation=45
         )
 
         ax.grid(
+            axis="y",
             alpha=0.2
-        )
-
-        ax.set_ylabel(
-            "€"
         )
 
         st.pyplot(
@@ -4552,95 +2147,341 @@ elif menu == "📊 Analisi":
             clear_figure=True
         )
 
-        st.subheader(
-            "Categorie con maggiore peso"
+    else:
+
+        st.info(
+            "Nessuna spesa disponibile per questo mese."
         )
 
-        categories = (
-            df
-            .groupby(
-                "categoria",
-                as_index=False
-            )["importo"]
-            .sum()
-            .sort_values(
-                "importo",
-                ascending=False
-            )
+    # --------------------------------------------------------
+    # MEDIA STORICA
+    # --------------------------------------------------------
+
+    st.markdown("---")
+
+    st.subheader(
+        "📈 Media mensile storica per categoria"
+    )
+
+    historical = query_df("""
+        SELECT
+            categoria,
+            AVG(totale) AS media
+        FROM (
+            SELECT
+                mese,
+                categoria,
+                SUM(importo) AS totale
+            FROM spese_mensili
+            GROUP BY mese, categoria
         )
+        GROUP BY categoria
+        ORDER BY media DESC
+    """)
+
+    if not historical.empty:
 
         st.dataframe(
-            categories.rename(
-                columns={
-                    "categoria":
-                        "Categoria",
-
-                    "importo":
-                        "Totale"
-                }
-            ),
+            historical.style.format({
+                "media": lambda x: euro(x)
+            }),
             use_container_width=True,
             hide_index=True
         )
 
-    else:
 
-        st.warning(
-            "Nessun dato storico disponibile."
+# ============================================================
+# IMPOSTAZIONI
+# ============================================================
+
+elif menu == "⚙️ Impostazioni":
+
+    section_title(
+        "⚙️ Impostazioni",
+        "Personalizza il funzionamento dell'app"
+    )
+
+    # --------------------------------------------------------
+    # RISPARMIO
+    # --------------------------------------------------------
+
+    st.subheader(
+        "🎯 Obiettivo di risparmio"
+    )
+
+    saving_target = st.number_input(
+        "Quanto vuoi accantonare ogni mese? (€)",
+        min_value=0.0,
+        value=float(
+            get_setting(
+                "risparmio_mensile_target",
+                0
+            )
+        ),
+        step=50.0
+    )
+
+    safety_fund = st.number_input(
+        "Fondo sicurezza da lasciare sempre disponibile (€)",
+        min_value=0.0,
+        value=float(
+            get_setting(
+                "fondo_sicurezza",
+                500
+            )
+        ),
+        step=50.0
+    )
+
+    if st.button(
+        "💾 Salva impostazioni"
+    ):
+
+        set_setting(
+            "risparmio_mensile_target",
+            saving_target
         )
+
+        set_setting(
+            "fondo_sicurezza",
+            safety_fund
+        )
+
+        st.success(
+            "Impostazioni salvate."
+        )
+
+    st.markdown("---")
+
+    # --------------------------------------------------------
+    # CATEGORIE
+    # --------------------------------------------------------
+
+    st.subheader(
+        "🏷️ Categorie"
+    )
+
+    categories = query_df("""
+        SELECT
+            nome AS Categoria,
+            tipo AS Tipo,
+            attiva AS Attiva
+        FROM categorie
+        ORDER BY tipo, nome
+    """)
+
+    st.dataframe(
+        categories,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # PERSONE
+    # --------------------------------------------------------
+
+    st.subheader(
+        "👨‍👩‍👧 Persone"
+    )
+
+    people = query_df("""
+        SELECT
+            nome AS Persona,
+            attiva AS Attiva
+        FROM persone
+        ORDER BY nome
+    """)
+
+    st.dataframe(
+        people,
+        use_container_width=True,
+        hide_index=True
+    )
+
+    # --------------------------------------------------------
+    # GESTIONE DATI
+    # --------------------------------------------------------
+
+    st.markdown("---")
+
+    st.subheader(
+        "🗑️ Gestione dati"
+    )
+
+    st.warning(
+        "Le operazioni seguenti modificano i dati presenti nel database."
+    )
+
+    delete_type = st.selectbox(
+        "Cosa vuoi eliminare?",
+        [
+            "Nessuna operazione",
+            "Tutte le spese singole",
+            "Tutte le entrate",
+            "Tutte le spese future",
+            "Tutti i budget",
+            "Tutti gli obiettivi"
+        ]
+    )
+
+    confirm = st.checkbox(
+        "Confermo di voler eliminare i dati selezionati"
+    )
+
+    if st.button(
+        "🗑️ Esegui eliminazione"
+    ):
+
+        if not confirm:
+
+            st.error(
+                "Devi confermare l'operazione."
+            )
+
+        else:
+
+            if delete_type == "Tutte le spese singole":
+
+                execute("""
+                    DELETE FROM movimenti
+                    WHERE tipo='uscita'
+                """)
+
+            elif delete_type == "Tutte le entrate":
+
+                execute("""
+                    DELETE FROM movimenti
+                    WHERE tipo='entrata'
+                """)
+
+            elif delete_type == "Tutte le spese future":
+
+                execute(
+                    "DELETE FROM spese_future"
+                )
+
+            elif delete_type == "Tutti i budget":
+
+                execute(
+                    "DELETE FROM budget_mensile"
+                )
+
+            elif delete_type == "Tutti gli obiettivi":
+
+                execute(
+                    "DELETE FROM obiettivi"
+                )
+
+            if delete_type != "Nessuna operazione":
+
+                st.success(
+                    "Operazione completata."
+                )
+
+                st.rerun()
 
 
 # ============================================================
 # IMPORT / EXPORT
 # ============================================================
 
-elif menu == "📥 Import/Export":
+elif menu == "📥 Import / Export":
 
     section_title(
-        "📥 Import / Export"
+        "📥 Import / Export",
+        "Backup completo dei dati dell'app"
     )
+
+    # --------------------------------------------------------
+    # STATO EXCEL
+    # --------------------------------------------------------
 
     if EXCEL_FILE.exists():
 
         st.success(
-            "🟢 Il file Excel è la fonte ufficiale "
-            "per storico, nuova casa, detrazioni, "
-            "mobili e rendering."
+            "🟢 File Excel trovato e storico importato."
         )
+
+        st.caption(
+            f"File: {EXCEL_FILE.name}"
+        )
+
+        historical = parse_excel_family()
+
+        if not historical.empty:
+
+            st.metric(
+                "Righe storico Excel",
+                len(historical)
+            )
 
     else:
 
-        st.error(
-            "Metti 'Spese casa -2.xlsx' "
-            "nella stessa cartella di app.py"
+        st.warning(
+            "Il file Spese casa -2.xlsx non è presente "
+            "nella stessa cartella dell'app."
         )
+
+    # --------------------------------------------------------
+    # ESPORTAZIONE
+    # --------------------------------------------------------
+
+    st.markdown("---")
+
+    st.subheader(
+        "⬇️ Esporta dati"
+    )
 
     tables = {
 
-        "Spese app":
-            qdf(
-                "SELECT * FROM spese"
-            ),
+        "Movimenti": query_df("""
+            SELECT *
+            FROM movimenti
+            ORDER BY data
+        """),
 
-        "Entrate app":
-            qdf(
-                "SELECT * FROM entrate"
-            ),
+        "Spese mensili": query_df("""
+            SELECT *
+            FROM spese_mensili
+            ORDER BY mese
+        """),
 
-        "Ricorrenti":
-            qdf(
-                "SELECT * FROM ricorrenti"
-            ),
+        "Ricorrenti": query_df("""
+            SELECT *
+            FROM ricorrenti
+        """),
 
-        "Budget":
-            qdf(
-                "SELECT * FROM budget"
-            ),
+        "Spese future": query_df("""
+            SELECT *
+            FROM spese_future
+            ORDER BY data
+        """),
 
-        "Obiettivi":
-            qdf(
-                "SELECT * FROM obiettivi"
-            )
+        "Budget": query_df("""
+            SELECT *
+            FROM budget_mensile
+            ORDER BY mese
+        """),
+
+        "Obiettivi": query_df("""
+            SELECT *
+            FROM obiettivi
+        """),
+
+        "Impostazioni": query_df("""
+            SELECT *
+            FROM impostazioni
+        """),
+
+        "Categorie": query_df("""
+            SELECT *
+            FROM categorie
+        """),
+
+        "Persone": query_df("""
+            SELECT *
+            FROM persone
+        """)
     }
 
     output = BytesIO()
@@ -4650,93 +2491,87 @@ elif menu == "📥 Import/Export":
         engine="openpyxl"
     ) as writer:
 
-        if excel:
-
-            excel[
-                "family"
-            ].to_excel(
-                writer,
-                sheet_name="Storico Excel",
-                index=False
-            )
-
-            pd.DataFrame(
-                excel[
-                    "house"
-                ]["costs"],
-                columns=[
-                    "Voce",
-                    "Importo"
-                ]
-            ).to_excel(
-                writer,
-                sheet_name="Casa Costi",
-                index=False
-            )
-
-            pd.DataFrame(
-                excel[
-                    "house"
-                ]["funds"],
-                columns=[
-                    "Voce",
-                    "Importo"
-                ]
-            ).to_excel(
-                writer,
-                sheet_name="Casa Coperture",
-                index=False
-            )
-
-            excel[
-                "house"
-            ]["detrazioni"].to_excel(
-                writer,
-                sheet_name="Detrazioni",
-                index=False
-            )
-
-            excel[
-                "furniture"
-            ].to_excel(
-                writer,
-                sheet_name="Mobili",
-                index=False
-            )
-
-        for name, dataframe in (
-            tables.items()
-        ):
+        for sheet_name, dataframe in tables.items():
 
             dataframe.to_excel(
                 writer,
-                sheet_name=name[:31],
+                sheet_name=sheet_name[:31],
                 index=False
             )
 
+        if EXCEL_FILE.exists():
+
+            historical = parse_excel_family()
+
+            if not historical.empty:
+
+                historical.to_excel(
+                    writer,
+                    sheet_name="Storico Excel",
+                    index=False
+                )
+
     st.download_button(
-        "⬇️ Scarica backup/report",
+        "⬇️ Scarica backup Excel",
         data=output.getvalue(),
-        file_name="backup_finanze.xlsx",
+        file_name="backup_finanze_famiglia.xlsx",
         mime=(
             "application/vnd.openxmlformats-officedocument."
             "spreadsheetml.sheet"
         )
     )
 
+    # --------------------------------------------------------
+    # RIEPILOGO DATABASE
+    # --------------------------------------------------------
 
-# ============================================================
-# FOOTER
-# ============================================================
+    st.markdown("---")
 
-st.sidebar.markdown("---")
-
-st.sidebar.caption(
-    "Gestione Casa & Finanze"
-)
-
-st.sidebar.caption(
-    datetime.now().strftime(
-        "Aggiornato il %d/%m/%Y alle %H:%M"
+    st.subheader(
+        "📊 Stato del database"
     )
-        )
+
+    stats = {
+        "Spese singole": query_df("""
+            SELECT COUNT(*) AS n
+            FROM movimenti
+            WHERE tipo='uscita'
+        """).iloc[0]["n"],
+
+        "Entrate": query_df("""
+            SELECT COUNT(*) AS n
+            FROM movimenti
+            WHERE tipo='entrata'
+        """).iloc[0]["n"],
+
+        "Mesi con spese": query_df("""
+            SELECT COUNT(DISTINCT mese) AS n
+            FROM spese_mensili
+        """).iloc[0]["n"],
+
+        "Ricorrenti": query_df("""
+            SELECT COUNT(*) AS n
+            FROM ricorrenti
+        """).iloc[0]["n"],
+
+        "Budget": query_df("""
+            SELECT COUNT(*) AS n
+            FROM budget_mensile
+        """).iloc[0]["n"],
+
+        "Obiettivi": query_df("""
+            SELECT COUNT(*) AS n
+            FROM obiettivi
+        """).iloc[0]["n"]
+    }
+
+    stats_df = pd.DataFrame(
+        list(stats.items()),
+        columns=["Voce", "Numero"]
+    )
+
+    st.dataframe(
+        stats_df,
+        use_container_width=True,
+        hide_index=True
+    )
