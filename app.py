@@ -222,6 +222,11 @@ def init_db():
         note TEXT
     );
 
+    CREATE TABLE IF NOT EXISTS modalita_mese (
+        mese TEXT PRIMARY KEY,
+        modalita TEXT NOT NULL DEFAULT 'singola'
+    );
+
     CREATE TABLE IF NOT EXISTS ricorrenti (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         descrizione TEXT NOT NULL,
@@ -433,6 +438,41 @@ def repair_categories():
 
 
 repair_categories()
+
+
+REGISTRATION_MODES = {
+    'mensile': '📅 Mensile per categoria',
+    'singola': '🧾 Singole spese',
+    'mista': '🔀 Mista',
+}
+
+def set_month_mode(mese, mode):
+    if mode not in REGISTRATION_MODES:
+        return
+    execute(
+        "INSERT INTO modalita_mese(mese, modalita) VALUES (?, ?) ON CONFLICT(mese) DO UPDATE SET modalita=excluded.modalita",
+        (mese, mode),
+    )
+
+def get_month_mode(year, month):
+    key = month_key(year, month)
+    saved = qdf("SELECT modalita FROM modalita_mese WHERE mese=?", (key,))
+    if not saved.empty and str(saved.iloc[0]['modalita']) in REGISTRATION_MODES:
+        return str(saved.iloc[0]['modalita'])
+    has_monthly = not qdf("SELECT id FROM spese_mensili WHERE mese=? LIMIT 1", (key,)).empty
+    has_single = not qdf("SELECT id FROM movimenti WHERE tipo='uscita' AND substr(data,1,7)=? LIMIT 1", (key,)).empty
+    if has_monthly and has_single:
+        return 'mista'
+    if has_monthly:
+        return 'mensile'
+    return 'singola'
+
+def mode_description(mode):
+    if mode == 'mensile':
+        return 'Il totale usa solo i valori mensili per categoria.'
+    if mode == 'singola':
+        return 'Il totale usa solo le singole spese pagate.'
+    return 'Il totale somma entrambe le fonti. Usala solo se rappresentano spese diverse.'
 
 
 def find_excel_file():
@@ -713,6 +753,10 @@ def import_excel_to_db(
 
             count += 1
 
+    for mese in df['mese'].drop_duplicates().tolist():
+        has_single = not qdf("SELECT id FROM movimenti WHERE tipo='uscita' AND substr(data,1,7)=? LIMIT 1", (mese,)).empty
+        set_month_mode(mese, 'mista' if has_single else 'mensile')
+
     return count
 
 
@@ -728,52 +772,27 @@ if excel_source is not None:
 # ============================================================
 # DATI FINANZIARI
 # ============================================================
-def monthly_category_totals(
-    year,
-    month
-):
+def monthly_category_totals(year, month):
     key = month_key(year, month)
-
-    monthly = qdf(
-        """
-        SELECT categoria, SUM(importo) AS importo
-        FROM spese_mensili
-        WHERE mese=?
-        GROUP BY categoria
-        """,
-        (key,)
-    )
-
-    individual = qdf(
-        """
-        SELECT categoria, SUM(importo) AS importo
-        FROM movimenti
-        WHERE tipo='uscita'
-          AND pagato=1
-          AND substr(data,1,7)=?
-        GROUP BY categoria
-        """,
-        (key,)
-    )
-
+    mode = get_month_mode(year, month)
     result = {category: 0.0 for category in EXPENSE_CATEGORIES}
 
-    for frame in (monthly, individual):
-        if frame.empty:
-            continue
-        for _, row in frame.iterrows():
-            category = normalize_category(row["categoria"])
+    if mode in ('mensile', 'mista'):
+        monthly = qdf("SELECT categoria, SUM(importo) AS importo FROM spese_mensili WHERE mese=? GROUP BY categoria", (key,))
+        for _, row in monthly.iterrows():
+            category = normalize_category(row['categoria'])
             if category in result:
-                result[category] += float(row["importo"] or 0)
+                result[category] += float(row['importo'] or 0)
 
-    return (
-        pd.DataFrame([
-            {"categoria": category, "importo": amount}
-            for category, amount in result.items()
-        ])
-        .sort_values("importo", ascending=False)
-        .reset_index(drop=True)
-    )
+    if mode in ('singola', 'mista'):
+        individual = qdf("SELECT categoria, SUM(importo) AS importo FROM movimenti WHERE tipo='uscita' AND pagato=1 AND substr(data,1,7)=? GROUP BY categoria", (key,))
+        for _, row in individual.iterrows():
+            category = normalize_category(row['categoria'])
+            if category in result:
+                result[category] += float(row['importo'] or 0)
+
+    return (pd.DataFrame([{'categoria': c, 'importo': v} for c, v in result.items()])
+            .sort_values('importo', ascending=False).reset_index(drop=True))
 
 
 def monthly_total(
@@ -1634,6 +1653,10 @@ elif menu == "💳 Spese":
                         )
                     )
 
+                    month_key_value = month_key(transaction_date.year, transaction_date.month)
+                    if get_month_mode(transaction_date.year, transaction_date.month) == 'mensile':
+                        set_month_mode(month_key_value, 'mista')
+
                     st.success(
                         "Spesa salvata."
                     )
@@ -1706,6 +1729,23 @@ elif menu == "💳 Spese":
             selected.year,
             selected.month
         )
+
+        current_mode = get_month_mode(selected.year, selected.month)
+        mode_keys = list(REGISTRATION_MODES.keys())
+        mode_labels = list(REGISTRATION_MODES.values())
+        selected_mode_label = st.selectbox(
+            "Modalità di conteggio del mese",
+            mode_labels,
+            index=mode_keys.index(current_mode),
+            key=f"mode_{key}",
+        )
+        selected_mode = mode_keys[mode_labels.index(selected_mode_label)]
+        if selected_mode != current_mode:
+            set_month_mode(key, selected_mode)
+            current_mode = selected_mode
+        st.info(mode_description(current_mode))
+        if current_mode == 'mista':
+            st.warning("⚠️ Modalità Mista: i valori mensili e le singole spese vengono sommati. Usala solo per spese diverse.")
 
         placeholders = ",".join(
             "?" * len(EXPENSE_CATEGORIES)
@@ -1862,6 +1902,9 @@ elif menu == "💳 Spese":
                                 row_id
                             )
                         )
+
+                has_single = not qdf("SELECT id FROM movimenti WHERE tipo='uscita' AND substr(data,1,7)=? LIMIT 1", (key,)).empty
+                set_month_mode(key, 'mista' if has_single else 'mensile')
 
                 st.success(
                     f"Spese di "
@@ -3259,6 +3302,11 @@ elif menu == "📥 Import / Export":
                 "SELECT * FROM spese_mensili"
             ),
 
+        "Modalita mesi":
+            qdf(
+                "SELECT * FROM modalita_mese"
+            ),
+
         "Ricorrenti":
             qdf(
                 "SELECT * FROM ricorrenti"
@@ -3408,6 +3456,7 @@ elif menu == "⚙️ Impostazioni":
             "Tutte le spese singole",
             "Tutte le entrate",
             "Tutte le spese mensili",
+            "Tutte le modalità dei mesi",
             "Tutti i budget",
             "Tutti gli obiettivi",
             "Tutte le ricorrenti",
@@ -3446,6 +3495,9 @@ elif menu == "⚙️ Impostazioni":
 
                 "Tutte le spese mensili":
                     "DELETE FROM spese_mensili",
+
+                "Tutte le modalità dei mesi":
+                    "DELETE FROM modalita_mese",
 
                 "Tutti i budget":
                     "DELETE FROM budget_mensile",
